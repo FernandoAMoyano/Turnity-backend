@@ -30,6 +30,8 @@
     "docker:dev:down": "docker-compose -f docker-compose.dev.yml down",
     "docker:npm:install": "docker exec -it turnity-api-dev npm install",
     "docker:prisma:migrate:dev": "docker exec -it turnity-api-dev npx prisma migrate dev",
+    "docker:prisma:migrate:deploy": "docker exec -it turnity-api-dev npx prisma migrate deploy",
+    "docker:prisma:migrate:status": "docker exec -it turnity-api-dev npx prisma migrate status",
     "docker:generate:prisma:client": "docker exec -it turnity-api-dev npx prisma generate",
     "docker:db:prisma:seed": "docker exec -it turnity-api-dev npx prisma db seed",
     "docker:db:reset": "docker exec -it turnity-api-dev npx prisma migrate reset --force",
