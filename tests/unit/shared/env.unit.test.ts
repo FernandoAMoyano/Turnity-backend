@@ -52,6 +52,11 @@ describe('validateEnv', () => {
         LOG_LEVEL: 'debug',
         JWT_ACCESS_EXPIRY: '1h',
         FRONTEND_URL: 'https://turnity.com',
+        // MAIL_* son obligatorias cuando NODE_ENV=production (superRefine)
+        MAIL_HOST: 'smtp.turnity.com',
+        MAIL_USER: 'noreply@turnity.com',
+        MAIL_PASSWORD: 'secret',
+        MAIL_FROM: 'noreply@turnity.com',
       });
 
       expect(result.NODE_ENV).toBe('production');
@@ -64,6 +69,28 @@ describe('validateEnv', () => {
 
   // con variables requeridas faltantes o inválidas
   describe('with missing or invalid required variables', () => {
+    // Debería llamar a process.exit(1) si faltan las MAIL_* en produccion
+    it('should call process.exit(1) if MAIL_* are missing in production', () => {
+      validateEnv({ ...validEnv, NODE_ENV: 'production' });
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    // Debería llamar a process.exit(1) si EXPOSE_VERIFICATION_TOKENS es true en produccion
+    it('should call process.exit(1) if EXPOSE_VERIFICATION_TOKENS is true in production', () => {
+      validateEnv({
+        ...validEnv,
+        NODE_ENV: 'production',
+        MAIL_HOST: 'smtp.turnity.com',
+        MAIL_USER: 'noreply@turnity.com',
+        MAIL_PASSWORD: 'secret',
+        MAIL_FROM: 'noreply@turnity.com',
+        EXPOSE_VERIFICATION_TOKENS: 'true',
+      });
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
     // Debería llamar a process.exit(1) si falta JWT_ACCESS_SECRET
     it('should call process.exit(1) if JWT_ACCESS_SECRET is missing', () => {
       const { JWT_ACCESS_SECRET, ...rest } = validEnv;
