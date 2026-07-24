@@ -22,6 +22,8 @@ model User {
   phone          String
   password       String
   isActive       Boolean        @default(true)
+  emailVerified   Boolean       @default(false)
+  emailVerifiedAt DateTime?
   profilePicture String?
   preferences    String?
   createdAt      DateTime       @default(now())
@@ -33,6 +35,7 @@ model User {
   notifications  Notification[]
   stylistServices StylistService[]
   refreshTokens  RefreshToken[]
+  verificationTokens VerificationToken[]
   role           Role           @relation(fields: [roleId], references: [id])
 }
 
@@ -55,6 +58,29 @@ model RefreshToken {
 
   @@index([userId])
   @@index([familyId])
+  @@index([expiresAt])
+}
+
+// Tokens de verificacion de email y reset de password (F-auth: registro publico
+// seguro). Mismo patron cripto que RefreshToken: valor opaco de alta entropia
+// entregado al usuario, persistido SOLO como hash SHA-256 (tokenHash). Un solo
+// uso (consumedAt) + expiracion (expiresAt). Tabla dedicada (ciclo de vida
+// distinto al de sesion: sin rotacion/familia). Al emitir uno nuevo del mismo
+// (userId, type) se invalidan los previos no consumidos.
+model VerificationToken {
+  id         String                @id @default(uuid())
+  userId     String
+  type       VerificationTokenType
+  tokenHash  String                @unique // SHA-256 del token opaco (nunca en claro)
+  expiresAt  DateTime
+  consumedAt DateTime?                      // marca single-use / invalidacion
+  ipAddress  String?                        // auditoria (RFC 6819)
+  userAgent  String?                        // auditoria (RFC 6819)
+  createdAt  DateTime              @default(now())
+
+  user       User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
   @@index([expiresAt])
 }
 
@@ -206,6 +232,11 @@ enum RoleName {
   ADMIN
   CLIENT
   STYLIST
+}
+
+enum VerificationTokenType {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
 }
 
 enum DayOfWeek {
