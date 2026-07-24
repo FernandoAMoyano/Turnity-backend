@@ -62,6 +62,8 @@ async function main() {
     data: {
       name: 'Admin Usuario',
       email: 'admin@turnity.com',
+      emailVerified: true,
+      emailVerifiedAt: new Date(),
       phone: '123456789',
       password: adminPassword,
       roleId: adminRole.id,
@@ -76,6 +78,8 @@ async function main() {
     data: {
       name: 'Maria Garcia',
       email: 'maria@example.com',
+      emailVerified: true,
+      emailVerifiedAt: new Date(),
       phone: '612345678',
       password: clientPassword,
       roleId: clientRole.id,
@@ -88,6 +92,8 @@ async function main() {
     data: {
       name: 'Juan Perez',
       email: 'juan@example.com',
+      emailVerified: true,
+      emailVerifiedAt: new Date(),
       phone: '623456789',
       password: clientPassword,
       roleId: clientRole.id,
@@ -102,6 +108,8 @@ async function main() {
     data: {
       name: 'Lucia Rodriguez',
       email: 'lucia@turnity.com',
+      emailVerified: true,
+      emailVerifiedAt: new Date(),
       phone: '634567890',
       password: stylistPassword,
       roleId: stylistRole.id,
@@ -113,6 +121,8 @@ async function main() {
     data: {
       name: 'Carlos Sanchez',
       email: 'carlos@turnity.com',
+      emailVerified: true,
+      emailVerifiedAt: new Date(),
       phone: '645678901',
       password: stylistPassword,
       roleId: stylistRole.id,
