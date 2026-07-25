@@ -10,6 +10,7 @@ describe('email templates', () => {
       expiresInHours: 24,
     };
 
+    // Debería incluir el asunto, la URL de verificación y el TTL tanto en html como en texto
     it('should include subject, the verification url and the TTL in both html and text', () => {
       const { subject, html, text } = renderVerificationEmail(ctx);
 
@@ -21,6 +22,7 @@ describe('email templates', () => {
       expect(html).toContain('24');
     });
 
+    // Debería escapar los caracteres sensibles de html en los valores interpolados
     it('should escape html-sensitive characters in interpolated values', () => {
       const { html } = renderVerificationEmail({ ...ctx, name: '<script>x</script>' });
 
@@ -37,6 +39,7 @@ describe('email templates', () => {
       expiresInMinutes: 60,
     };
 
+    // Debería incluir el asunto, la URL de reset y el TTL tanto en html como en texto
     it('should include subject, the reset url and the TTL in both html and text', () => {
       const { subject, html, text } = renderPasswordResetEmail(ctx);
 

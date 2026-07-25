@@ -8,6 +8,7 @@ describe('NodemailerEmailService', () => {
     return { transport, sendMail };
   };
 
+  // Debería enviar el email de verificación a través del transporte inyectado
   it('should send the verification email through the injected transport', async () => {
     const { transport, sendMail } = makeTransport();
     const service = new NodemailerEmailService(transport);
@@ -31,6 +32,7 @@ describe('NodemailerEmailService', () => {
     );
   });
 
+  // Debería enviar el email de reset de password a través del transporte inyectado
   it('should send the password reset email through the injected transport', async () => {
     const { transport, sendMail } = makeTransport();
     const service = new NodemailerEmailService(transport);
@@ -53,6 +55,7 @@ describe('NodemailerEmailService', () => {
     );
   });
 
+  // Debería propagar los errores del transporte (el caller decide cómo manejarlos)
   it('should propagate transport errors (caller decides how to handle them)', async () => {
     const sendMail = jest.fn().mockRejectedValue(new Error('smtp down'));
     const transport = { sendMail } as unknown as Transporter;

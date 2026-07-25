@@ -3,6 +3,7 @@ import { createEmailTransport, isRealTransport } from '../../../../src/shared/em
 // NODE_ENV=test se fuerza en tests/setup/jest.setup.ts, asi que el factory
 // debe devolver siempre el transporte mock (jsonTransport), que NO envia mails.
 describe('createEmailTransport (NODE_ENV=test)', () => {
+  // Debería devolver un jsonTransport que no envía emails reales
   it('should return a jsonTransport that does not send real emails', async () => {
     const transport = createEmailTransport();
 
@@ -23,6 +24,7 @@ describe('createEmailTransport (NODE_ENV=test)', () => {
     expect((info as unknown as { message: string }).message).toContain('cuerpo de prueba');
   });
 
+  // isRealTransport debería ser false en test
   it('isRealTransport should be false in test', () => {
     expect(isRealTransport()).toBe(false);
   });
