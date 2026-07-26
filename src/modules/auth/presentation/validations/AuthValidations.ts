@@ -52,6 +52,29 @@ export class AuthValidations {
   ];
 
   /**
+   * Validación para verificar el email
+   */
+  static verifyEmail = [
+    body('token')
+      .notEmpty()
+      .withMessage('Token is required')
+      .isString()
+      .withMessage('Token must be a string'),
+  ];
+
+  /**
+   * Validación para reenviar el email de verificación
+   */
+  static resendVerification = [
+    body('email')
+      .notEmpty()
+      .withMessage('Email is required')
+      .isEmail()
+      .withMessage('Valid email is required')
+      .normalizeEmail(),
+  ];
+
+  /**
    * Validación para el inicio de sesión
    */
   static login = [

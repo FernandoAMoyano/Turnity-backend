@@ -76,6 +76,22 @@ export const refreshTokenRateLimiterOptions: Partial<Options> = {
   handler: rateLimitHandler('Too many token refresh attempts, please try again later'),
 };
 
+/**
+ * Configuracion del limiter de POST /auth/resend-verification y
+ * POST /auth/forgot-password -- frena el abuso de reenvio de emails (spam a la
+ * casilla de un tercero) y el sondeo de la API. Umbral bajo (3/hora por IP) a
+ * proposito: reenviar/recuperar es una accion poco frecuente para un usuario real.
+ *
+ * Store en memoria (como el resto): sirve para una sola instancia; migrar a un
+ * store distribuido queda como deuda para multi-instancia.
+ */
+export const resendVerificationRateLimiterOptions: Partial<Options> = {
+  ...baseOptions,
+  windowMs: 60 * 60 * 1000, // 60 minutos
+  limit: 3,
+  handler: rateLimitHandler('Too many requests, please try again later'),
+};
+
 /** Rate limiter para POST /auth/login, usado en AuthRoutes.ts */
 export const loginRateLimiter = rateLimit(loginRateLimiterOptions);
 
@@ -84,3 +100,6 @@ export const registerRateLimiter = rateLimit(registerRateLimiterOptions);
 
 /** Rate limiter para POST /auth/refresh-token, usado en AuthRoutes.ts */
 export const refreshTokenRateLimiter = rateLimit(refreshTokenRateLimiterOptions);
+
+/** Rate limiter para reenvio de verificacion / forgot-password, usado en AuthRoutes.ts */
+export const resendVerificationRateLimiter = rateLimit(resendVerificationRateLimiterOptions);
