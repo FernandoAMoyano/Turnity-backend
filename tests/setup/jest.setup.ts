@@ -7,6 +7,11 @@
 // app.ts, el logger de Winston) nunca se activa durante la suite de tests.
 process.env.NODE_ENV = 'test';
 
+// Exponer el token de verificacion/reset en las respuestas para que los tests de
+// integracion puedan leerlo (mismo mecanismo que en dev por Postman). Se setea
+// antes de dotenv/env.ts; en produccion el flag esta prohibido (validado en env.ts).
+process.env.EXPOSE_VERIFICATION_TOKENS = 'true';
+
 import dotenv from 'dotenv';
 
 // dotenv.config() no sobreescribe variables ya presentes en process.env por defecto,
