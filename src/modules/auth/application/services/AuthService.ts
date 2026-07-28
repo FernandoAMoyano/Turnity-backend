@@ -26,7 +26,10 @@ export class AuthService {
   }
 
   async registerService(registerDto: RegisterDto): Promise<UserDto> {
-    return this.registerUser.execute(registerDto);
+    // RegisterUser ahora devuelve { user, verificationToken? }; este servicio
+    // (legacy) expone solo el UserDto para no cambiar su contrato.
+    const result = await this.registerUser.execute(registerDto);
+    return result.user;
   }
 
   async refreshTokenService(refreshToken: string): Promise<LoginResponseDto> {

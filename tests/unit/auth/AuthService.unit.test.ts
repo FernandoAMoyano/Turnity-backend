@@ -137,7 +137,8 @@ describe('AuthService Unit Tests', () => {
         updatedAt: new Date(),
       };
 
-      mockRegisterUser.execute.mockResolvedValue(expectedUser);
+      // RegisterUser.execute devuelve { user, verificationToken? }
+      mockRegisterUser.execute.mockResolvedValue({ user: expectedUser });
 
       const result = await authService.registerService(registerDto);
 
@@ -173,7 +174,7 @@ describe('AuthService Unit Tests', () => {
         updatedAt: new Date(),
       };
 
-      mockRegisterUser.execute.mockResolvedValue(expectedUser);
+      mockRegisterUser.execute.mockResolvedValue({ user: expectedUser });
 
       const result = await authService.registerService(registerDto);
 

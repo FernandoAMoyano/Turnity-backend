@@ -47,6 +47,12 @@ jobs:
       MAIL_USER: ci@example.com
       MAIL_PASSWORD: ci_password_not_real
       MAIL_FROM: noreply@example.com
+      MAIL_SECURE: 'false'
+      # Verificacion de email + reset de password. EXPOSE_VERIFICATION_TOKENS lo
+      # fuerza tests/setup/jest.setup.ts para la suite; aca solo el resto de config.
+      EMAIL_VERIFICATION_TOKEN_TTL_HOURS: 24
+      PASSWORD_RESET_TOKEN_TTL_MINUTES: 60
+      REQUIRE_EMAIL_VERIFICATION: 'true'
 
     steps:
       - name: Checkout repository

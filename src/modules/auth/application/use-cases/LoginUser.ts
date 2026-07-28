@@ -10,6 +10,8 @@ import { isValidEmail } from '../../../../shared/utils/validation';
 import { generateUuid } from '../../../../shared/utils/uuid';
 import { ValidationError } from '../../../../shared/exceptions/ValidationError';
 import { UnauthorizedError } from '../../../../shared/exceptions/UnauthorizedError';
+import { EmailNotVerifiedError } from '../../../../shared/exceptions/EmailNotVerifiedError';
+import { env } from '../../../../shared/config/env';
 
 /**
  * Contexto opcional de la request para auditar la sesión (RFC 6819).
@@ -70,6 +72,13 @@ export class LoginUser {
     const role = userWithRole.role;
     if (!role) {
       throw new UnauthorizedError('Invalid credentials');
+    }
+
+    // Gating de verificacion de email (F-auth). Se chequea DESPUES de validar las
+    // credenciales para no filtrar el estado de verificacion a quien no conoce la
+    // password. Gateado por REQUIRE_EMAIL_VERIFICATION (default true).
+    if (env.REQUIRE_EMAIL_VERIFICATION && !userWithRole.emailVerified) {
+      throw new EmailNotVerifiedError();
     }
 
     // Generar tokens

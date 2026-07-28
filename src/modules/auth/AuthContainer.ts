@@ -29,6 +29,16 @@ import { PrismaRefreshTokenRepository } from './infrastructure/persistence/Prism
 import { CryptoRefreshTokenService } from './infrastructure/services/CryptoRefreshTokenService';
 import { IRefreshTokenRepository } from './domain/repositories/IRefreshTokenRepository';
 import { RefreshTokenService } from './application/services/RefreshTokenService';
+import { PrismaVerificationTokenRepository } from './infrastructure/persistence/PrismaVerificationTokenRepository';
+import { CryptoVerificationTokenService } from './infrastructure/services/CryptoVerificationTokenService';
+import { IVerificationTokenRepository } from './domain/repositories/IVerificationTokenRepository';
+import { VerificationTokenService } from './application/services/VerificationTokenService';
+import { NodemailerEmailService } from '../../shared/email/NodemailerEmailService';
+import { EmailService } from '../../shared/email/EmailService';
+import { VerifyEmail } from './application/use-cases/VerifyEmail';
+import { ResendVerification } from './application/use-cases/ResendVerification';
+import { ForgotPassword } from './application/use-cases/ForgotPassword';
+import { ResetPassword } from './application/use-cases/ResetPassword';
 
 /**
  * Contenedor de dependencias para el módulo de autenticación
@@ -97,6 +107,13 @@ export class AuthContainer {
     );
     const refreshTokenService: RefreshTokenService = new CryptoRefreshTokenService();
 
+    // Verificacion de email / reset de password
+    const verificationTokenRepository: IVerificationTokenRepository =
+      new PrismaVerificationTokenRepository(this.prisma);
+    const verificationTokenService: VerificationTokenService =
+      new CryptoVerificationTokenService(verificationTokenRepository);
+    const emailService: EmailService = new NodemailerEmailService();
+
     // Use Cases
     this._loginUser = new LoginUser(
       userRepository,
@@ -105,7 +122,13 @@ export class AuthContainer {
       refreshTokenRepository,
       refreshTokenService,
     );
-    this._registerUser = new RegisterUser(userRepository, roleRepository, hashService);
+    this._registerUser = new RegisterUser(
+      userRepository,
+      roleRepository,
+      hashService,
+      verificationTokenService,
+      emailService,
+    );
     this._refreshToken = new RefreshToken(
       userRepository,
       roleRepository,
@@ -126,6 +149,25 @@ export class AuthContainer {
     this._logoutUser = new LogoutUser(refreshTokenRepository, refreshTokenService);
     this._logoutAll = new LogoutAllSessions(refreshTokenRepository);
 
+    const verifyEmail = new VerifyEmail(userRepository, verificationTokenService);
+    const resendVerification = new ResendVerification(
+      userRepository,
+      verificationTokenService,
+      emailService,
+    );
+
+    const forgotPassword = new ForgotPassword(
+      userRepository,
+      verificationTokenService,
+      emailService,
+    );
+    const resetPassword = new ResetPassword(
+      userRepository,
+      verificationTokenService,
+      hashService,
+      refreshTokenRepository,
+    );
+
     // HTTP Layer - Inyectamos los casos de uso directamente
     this._authController = new AuthController(
       this._loginUser,
@@ -137,6 +179,10 @@ export class AuthContainer {
       this._deactivateUser,
       this._logoutUser,
       this._logoutAll,
+      verifyEmail,
+      resendVerification,
+      forgotPassword,
+      resetPassword,
     );
 
     this._authMiddleware = new AuthMiddleware(jwtService, roleRepository);

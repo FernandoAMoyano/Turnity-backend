@@ -51,6 +51,13 @@ export const createTestUser = async (roleType: 'CLIENT' | 'ADMIN' | 'STYLIST' = 
     throw new Error(`Registro falló: ${response.status}`);
   }
 
+  // Gating de login activo en test: verificamos el email con el devToken (expuesto
+  // en test via EXPOSE_VERIFICATION_TOKENS) para que el usuario pueda loguear.
+  const devToken = response.body.devToken;
+  if (devToken) {
+    await request(app).post('/api/v1/auth/verify-email').send({ token: devToken });
+  }
+
   return response.body.data;
 };
 

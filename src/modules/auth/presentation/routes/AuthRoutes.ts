@@ -7,6 +7,8 @@ import {
   loginRateLimiter,
   registerRateLimiter,
   refreshTokenRateLimiter,
+  resendVerificationRateLimiter,
+  forgotPasswordRateLimiter,
 } from '../../../../shared/middleware/RateLimiter';
 import { csrfProtection } from '../middleware/CsrfMiddleware';
 
@@ -62,6 +64,48 @@ export class AuthRoutes {
       ValidationMiddleware.handleValidationErrors,
       (req: Request, res: Response, next: NextFunction) => {
         this.authController.register(req, res).catch(next);
+      },
+    );
+
+    // POST /verify-email - Verificar email (público)
+    this.router.post(
+      '/verify-email',
+      AuthValidations.verifyEmail,
+      ValidationMiddleware.handleValidationErrors,
+      (req: Request, res: Response, next: NextFunction) => {
+        this.authController.verifyEmail(req, res).catch(next);
+      },
+    );
+
+    // POST /resend-verification - Reenviar verificación (público, rate limited, anti-enum)
+    this.router.post(
+      '/resend-verification',
+      resendVerificationRateLimiter,
+      AuthValidations.resendVerification,
+      ValidationMiddleware.handleValidationErrors,
+      (req: Request, res: Response, next: NextFunction) => {
+        this.authController.resendVerification(req, res).catch(next);
+      },
+    );
+
+    // POST /forgot-password - Solicitar reset de password (público, rate limited, anti-enum)
+    this.router.post(
+      '/forgot-password',
+      forgotPasswordRateLimiter,
+      AuthValidations.forgotPassword,
+      ValidationMiddleware.handleValidationErrors,
+      (req: Request, res: Response, next: NextFunction) => {
+        this.authController.forgotPassword(req, res).catch(next);
+      },
+    );
+
+    // POST /reset-password - Aplicar reset de password (público)
+    this.router.post(
+      '/reset-password',
+      AuthValidations.resetPassword,
+      ValidationMiddleware.handleValidationErrors,
+      (req: Request, res: Response, next: NextFunction) => {
+        this.authController.resetPassword(req, res).catch(next);
       },
     );
 

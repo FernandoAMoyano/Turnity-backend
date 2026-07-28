@@ -18,6 +18,11 @@ export interface IUserRepository {
   findByEmail(email: string): Promise<User | null>;
   findByEmailWithRole(email: string): Promise<UserWithRole | null>;
   existsByEmail(email: string): Promise<boolean>;
+  /**
+   * Marca el email del usuario como verificado (idempotente).
+   * Setea emailVerified=true y emailVerifiedAt=now.
+   */
+  markEmailAsVerified(userId: string): Promise<void>;
   save(user: User): Promise<User>;
   update(user: User): Promise<User>;
   delete(id: string): Promise<void>;

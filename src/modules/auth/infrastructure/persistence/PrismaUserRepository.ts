@@ -115,6 +115,18 @@ export class PrismaUserRepository implements IUserRepository {
   }
 
   /**
+   * Marca el email de un usuario como verificado (idempotente)
+   * @param userId - ID del usuario
+   * @description Setea emailVerified=true y emailVerifiedAt=now
+   */
+  async markEmailAsVerified(userId: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { emailVerified: true, emailVerifiedAt: new Date() },
+    });
+  }
+
+  /**
    * Guarda un nuevo usuario en la base de datos
    * @param user - Entidad User a persistir
    * @returns Promise con el usuario guardado

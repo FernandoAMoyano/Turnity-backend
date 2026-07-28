@@ -86,6 +86,7 @@ describe('DeactivateUser Use Case', () => {
       findByEmail: jest.fn(),
       findByEmailWithRole: jest.fn(),
       existsByEmail: jest.fn(),
+      markEmailAsVerified: jest.fn(),
       save: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),

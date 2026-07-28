@@ -52,6 +52,60 @@ export class AuthValidations {
   ];
 
   /**
+   * Validación para verificar el email
+   */
+  static verifyEmail = [
+    body('token')
+      .notEmpty()
+      .withMessage('Token is required')
+      .isString()
+      .withMessage('Token must be a string'),
+  ];
+
+  /**
+   * Validación para reenviar el email de verificación
+   */
+  static resendVerification = [
+    body('email')
+      .notEmpty()
+      .withMessage('Email is required')
+      .isEmail()
+      .withMessage('Valid email is required')
+      .normalizeEmail(),
+  ];
+
+  /**
+   * Validación para solicitar el reset de password
+   */
+  static forgotPassword = [
+    body('email')
+      .notEmpty()
+      .withMessage('Email is required')
+      .isEmail()
+      .withMessage('Valid email is required')
+      .normalizeEmail(),
+  ];
+
+  /**
+   * Validación para aplicar el reset de password
+   */
+  static resetPassword = [
+    body('token')
+      .notEmpty()
+      .withMessage('Token is required')
+      .isString()
+      .withMessage('Token must be a string'),
+
+    body('password')
+      .notEmpty()
+      .withMessage('Password is required')
+      .isLength({ min: 8 })
+      .withMessage('Password must be at least 8 characters')
+      .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
+      .withMessage('Password must contain at least one uppercase, one lowercase, and one number'),
+  ];
+
+  /**
    * Validación para el inicio de sesión
    */
   static login = [
