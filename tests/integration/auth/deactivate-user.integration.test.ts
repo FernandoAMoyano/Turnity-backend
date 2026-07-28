@@ -26,6 +26,15 @@ describe('Deactivate User Integration Tests (F11)', () => {
       });
 
     expect(response.status).toBe(201);
+
+    // Verificar email (gating de login): permite loguear a estos usuarios cuando
+    // el test lo necesita. Inofensivo para los que solo son desactivados por admin.
+    if (response.body.devToken) {
+      await request(app)
+        .post('/api/v1/auth/verify-email')
+        .send({ token: response.body.devToken });
+    }
+
     return response.body.data;
   };
 
