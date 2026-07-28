@@ -11,6 +11,8 @@ import { LogoutUser } from '../../application/use-cases/LogoutUser';
 import { LogoutAllSessions } from '../../application/use-cases/LogoutAllSessions';
 import { VerifyEmail } from '../../application/use-cases/VerifyEmail';
 import { ResendVerification } from '../../application/use-cases/ResendVerification';
+import { ForgotPassword } from '../../application/use-cases/ForgotPassword';
+import { ResetPassword } from '../../application/use-cases/ResetPassword';
 import { AuthenticatedRequest } from '../middleware/AuthMiddleware';
 import { generateCsrfToken } from '../middleware/CsrfMiddleware';
 import {
@@ -27,6 +29,8 @@ import { UpdateProfileDto } from '../../application/dto/request/UpdateProfileDto
 import { ChangePasswordDto } from '../../application/dto/request/ChangePasswordDto';
 import { VerifyEmailDto } from '../../application/dto/request/VerifyEmailDto';
 import { ResendVerificationDto } from '../../application/dto/request/ResendVerificationDto';
+import { ForgotPasswordDto } from '../../application/dto/request/ForgotPasswordDto';
+import { ResetPasswordDto } from '../../application/dto/request/ResetPasswordDto';
 import { UnauthorizedError } from '../../../../shared/exceptions/UnauthorizedError';
 import { devTokenField } from '../../../../shared/utils/devToken';
 
@@ -34,7 +38,8 @@ import { devTokenField } from '../../../../shared/utils/devToken';
  * Controlador de autenticación que maneja peticiones HTTP
  * relacionadas con usuarios. Coordina las operaciones de
  * login, registro, renovación de tokens y gestión de perfiles.
- * Los errores burbujean al errorHandler global via .catch(next) en AuthRoutes.
+ * Los métodos no capturan errores: los dejan propagar para que el errorHandler
+ * global arme la respuesta uniforme.
  */
 export class AuthController {
   constructor(
@@ -49,6 +54,8 @@ export class AuthController {
     private logoutAllUseCase: LogoutAllSessions,
     private verifyEmailUseCase: VerifyEmail,
     private resendVerificationUseCase: ResendVerification,
+    private forgotPasswordUseCase: ForgotPassword,
+    private resetPasswordUseCase: ResetPassword,
   ) {}
 
   /**
@@ -139,6 +146,46 @@ export class AuthController {
       success: true,
       message: 'If an account exists for that email, a verification link has been sent',
       ...devTokenField(result.verificationToken),
+    });
+  }
+
+  /**
+   * Solicita el reset de password. Respuesta uniforme (anti-enumeracion):
+   * identica exista o no el email.
+   * @route POST /auth/forgot-password
+   * @param req - Request con { email } en el body
+   * @param res - Response de Express
+   * @returns Promise<Response>
+   * @responseStatus 200 - Respuesta generica
+   */
+  async forgotPassword(req: Request, res: Response): Promise<Response> {
+    const { email }: ForgotPasswordDto = req.body;
+    const result = await this.forgotPasswordUseCase.execute(email);
+
+    return res.status(200).json({
+      success: true,
+      message: 'If an account exists for that email, a password reset link has been sent',
+      ...devTokenField(result.resetToken),
+    });
+  }
+
+  /**
+   * Aplica el reset de password con el token del enlace. Revoca todas las sesiones.
+   * @route POST /auth/reset-password
+   * @param req - Request con { token, password } en el body
+   * @param res - Response de Express
+   * @returns Promise<Response>
+   * @responseStatus 200 - Password actualizada exitosamente
+   * @throws InvalidTokenError si el token es invalido, expirado o ya usado
+   * @throws ValidationError si la nueva password no cumple las reglas de fuerza
+   */
+  async resetPassword(req: Request, res: Response): Promise<Response> {
+    const dto: ResetPasswordDto = req.body;
+    await this.resetPasswordUseCase.execute(dto);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Password reset successfully',
     });
   }
 

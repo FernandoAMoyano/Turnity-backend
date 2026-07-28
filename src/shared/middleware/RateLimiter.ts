@@ -101,5 +101,8 @@ export const registerRateLimiter = rateLimit(registerRateLimiterOptions);
 /** Rate limiter para POST /auth/refresh-token, usado en AuthRoutes.ts */
 export const refreshTokenRateLimiter = rateLimit(refreshTokenRateLimiterOptions);
 
-/** Rate limiter para reenvio de verificacion / forgot-password, usado en AuthRoutes.ts */
+/** Rate limiter para reenvio de verificacion, usado en AuthRoutes.ts */
 export const resendVerificationRateLimiter = rateLimit(resendVerificationRateLimiterOptions);
+
+/** Rate limiter para forgot-password (store propio, misma config), usado en AuthRoutes.ts */
+export const forgotPasswordRateLimiter = rateLimit(resendVerificationRateLimiterOptions);

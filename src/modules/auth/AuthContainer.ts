@@ -37,6 +37,8 @@ import { NodemailerEmailService } from '../../shared/email/NodemailerEmailServic
 import { EmailService } from '../../shared/email/EmailService';
 import { VerifyEmail } from './application/use-cases/VerifyEmail';
 import { ResendVerification } from './application/use-cases/ResendVerification';
+import { ForgotPassword } from './application/use-cases/ForgotPassword';
+import { ResetPassword } from './application/use-cases/ResetPassword';
 
 /**
  * Contenedor de dependencias para el módulo de autenticación
@@ -154,6 +156,18 @@ export class AuthContainer {
       emailService,
     );
 
+    const forgotPassword = new ForgotPassword(
+      userRepository,
+      verificationTokenService,
+      emailService,
+    );
+    const resetPassword = new ResetPassword(
+      userRepository,
+      verificationTokenService,
+      hashService,
+      refreshTokenRepository,
+    );
+
     // HTTP Layer - Inyectamos los casos de uso directamente
     this._authController = new AuthController(
       this._loginUser,
@@ -167,6 +181,8 @@ export class AuthContainer {
       this._logoutAll,
       verifyEmail,
       resendVerification,
+      forgotPassword,
+      resetPassword,
     );
 
     this._authMiddleware = new AuthMiddleware(jwtService, roleRepository);
