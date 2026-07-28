@@ -76,7 +76,7 @@ export class JwtTokenService implements JwtService {
         issuer: 'turnity-api',
         audience: 'turnity-app',
       }) as JwtPayload;
-    } catch (error) {
+    } catch {
       throw new UnauthorizedError('Invalid access token');
     }
   }
@@ -94,7 +94,7 @@ export class JwtTokenService implements JwtService {
         issuer: 'turnity-api',
         audience: 'turnity-app',
       }) as JwtPayload;
-    } catch (error) {
+    } catch {
       throw new UnauthorizedError('Invalid refresh token');
     }
   }

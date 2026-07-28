@@ -85,8 +85,8 @@
     "@types/swagger-ui-express": "^4.1.8",
     "@types/uuid": "^10.0.0",
     "@types/yamljs": "^0.2.34",
-    "@typescript-eslint/eslint-plugin": "^6.15.0",
-    "@typescript-eslint/parser": "^6.15.0",
+    "@typescript-eslint/eslint-plugin": "^8.65.0",
+    "@typescript-eslint/parser": "^8.65.0",
     "eslint": "^8.57.1",
     "eslint-config-prettier": "^10.1.5",
     "jest": "^30.4.2",
@@ -99,5 +99,8 @@
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
+  },
+  "overrides": {
+    "brace-expansion": "^5.0.8"
   }
 }

@@ -14,7 +14,7 @@ export const cleanupTestUsers = async () => {
         },
       },
     });
-  } catch (error) {
+  } catch {
     // Ignorar errores de limpieza
   }
 };
