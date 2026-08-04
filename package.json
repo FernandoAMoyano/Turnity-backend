@@ -12,6 +12,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "build:prod": "tsc -p tsconfig.build.json",
+    "postbuild:prod": "mkdir -p dist/docs && cp src/docs/swagger.yaml dist/docs/swagger.yaml",
     "prisma:studio": "prisma studio",
     "prisma:format": "prisma format",
     "prisma:generate": "prisma generate",
