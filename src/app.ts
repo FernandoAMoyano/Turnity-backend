@@ -12,6 +12,7 @@ import cookieParser from 'cookie-parser';
 import { errorHandler } from './shared/middleware/ErrorHandler';
 import { requestIdMiddleware } from './shared/middleware/RequestIdMiddleware';
 import { prisma } from './shared/config/Prisma';
+import { checkDatabaseReadiness } from './shared/health/ReadinessService';
 import { AuthContainer } from './modules/auth/AuthContainer';
 import { ServicesContainer } from './modules/services/ServicesContainer';
 import { AppointmentContainer } from './modules/appointments/AppointmentContainer';
@@ -90,6 +91,27 @@ class App {
         message: 'Turnity API is running',
         timestamp: new Date().toISOString(),
         version: process.env.npm_package_version || '1.0.0',
+      });
+    });
+
+    // Readiness probe: a diferencia de /health, esta si consulta la base de
+    // datos (SELECT 1). Usado por el smoke check del CD, no como HEALTHCHECK
+    // de Docker -- ver ReadinessService.ts para el detalle de esa decision.
+    this.app.get('/ready', async (req, res) => {
+      const isReady = await checkDatabaseReadiness(prisma);
+
+      if (isReady) {
+        res.status(200).json({
+          success: true,
+          checks: { database: 'up' },
+        });
+        return;
+      }
+
+      res.status(503).json({
+        success: false,
+        checks: { database: 'down' },
+        code: 'NOT_READY',
       });
     });
 
