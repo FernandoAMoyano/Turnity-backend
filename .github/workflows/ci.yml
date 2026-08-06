@@ -90,3 +90,9 @@ jobs:
 
       - name: Run test suite
         run: npm test -- --coverage
+
+      # Sanity check de la imagen de produccion (F3): sin push, solo
+      # confirma que el Dockerfile sigue buildeando -- detecta un Dockerfile
+      # roto en el PR, en vez de recien en el deploy (cd.yml).
+      - name: Docker build sanity check (imagen de produccion)
+        run: docker build --target runtime -t turnity-backend:ci .
