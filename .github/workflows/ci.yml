@@ -36,6 +36,9 @@ jobs:
       DB_PASSWORD: turnity_ci
       DB_DATABASE: turnity_ci
       DATABASE_URL: postgresql://turnity_ci:turnity_ci@localhost:5432/turnity_ci?schema=public
+      # Sin pooler en el Postgres de CI -- misma URL que DATABASE_URL. Ver
+      # comentario en schema.prisma / .env.production.example (F3).
+      DIRECT_URL: postgresql://turnity_ci:turnity_ci@localhost:5432/turnity_ci?schema=public
       TEST_DATABASE_URL: postgresql://turnity_ci:turnity_ci@localhost:5432/turnity_ci?schema=public
       JWT_ACCESS_SECRET: ci_access_secret_for_testing_only
       JWT_REFRESH_SECRET: ci_refresh_secret_for_testing_only
@@ -87,3 +90,9 @@ jobs:
 
       - name: Run test suite
         run: npm test -- --coverage
+
+      # Sanity check de la imagen de produccion (F3): sin push, solo
+      # confirma que el Dockerfile sigue buildeando -- detecta un Dockerfile
+      # roto en el PR, en vez de recien en el deploy (cd.yml).
+      - name: Docker build sanity check (imagen de produccion)
+        run: docker build --target runtime -t turnity-backend:ci .

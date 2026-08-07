@@ -11,6 +11,8 @@
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
+    "build:prod": "tsc -p tsconfig.build.json",
+    "postbuild:prod": "mkdir -p dist/docs && cp src/docs/swagger.yaml dist/docs/swagger.yaml",
     "prisma:studio": "prisma studio",
     "prisma:format": "prisma format",
     "prisma:generate": "prisma generate",
@@ -47,6 +49,7 @@
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
+    "prisma": "^6.19.3",
     "bcrypt": "^6.0.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -91,7 +94,6 @@
     "eslint-config-prettier": "^10.1.5",
     "jest": "^30.4.2",
     "prettier": "^3.5.3",
-    "prisma": "^6.19.3",
     "supertest": "^7.1.0",
     "ts-jest": "^29.4.11",
     "tsx": "^4.20.1",
@@ -101,6 +103,12 @@
     "seed": "tsx prisma/seed.ts"
   },
   "overrides": {
-    "brace-expansion": "^5.0.8"
+    "brace-expansion": "^5.0.9",
+    "fast-uri": "^3.1.5",
+    "ip-address": "^10.3.1",
+    "js-yaml": "^4.3.1",
+    "@istanbuljs/load-nyc-config": {
+      "js-yaml": "^3.15.1"
+    }
   }
 }

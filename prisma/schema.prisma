@@ -4,7 +4,13 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url = env("DATABASE_URL")
+  url       = env("DATABASE_URL")
+  // Conexion directa (sin pooler/PgBouncer), usada SOLO por prisma migrate/db
+  // push -- el motor de migraciones necesita locks y estado de sesion que no
+  // sobreviven a traves de un connection pooler (ej. el -pooler de Neon).
+  // En un Postgres sin pooler (dev, CI, docker-compose) puede ser igual a
+  // DATABASE_URL. -- F3
+  directUrl = env("DIRECT_URL")
 }
 
 model Role {

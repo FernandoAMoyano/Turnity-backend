@@ -1,0 +1,89 @@
+# docker-compose.yml -- REFERENCIA LOCAL / self-hosted.
+#
+# Esto NO es lo que usa el deploy real (Render + Neon, ver Fase 4). Render
+# corre la imagen "runtime" del Dockerfile directamente, con su propio
+# Pre-Deploy Command (prisma migrate deploy) y su propia base (Neon) -- no
+# levanta este compose en ningun lado.
+#
+# Para que sirve entonces:
+#   - Validar de punta a punta, en tu maquina, que la imagen de produccion
+#     funciona (build -> migrate -> api) antes de pushear.
+#   - Dejar documentado un camino self-hosted alternativo si en el futuro
+#     hiciera falta correr esto fuera de un PaaS.
+#
+# Variables: todas se leen desde .env.production (no versionado). Copiar
+# .env.production.example a .env.production y completar. NUNCA reusar ahi
+# los secretos reales de Render/produccion.
+
+# Nombre de proyecto propio: por defecto Compose usa el nombre de la carpeta
+# como "proyecto", y como docker-compose.dev.yml corre en la misma carpeta,
+# sin esto Compose trata a los contenedores de dev y de este compose como
+# parte del mismo proyecto -- y reinicia los de dev al levantar este.
+name: turnity-backend-prod-local
+
+services:
+  db:
+    image: postgres:14-alpine
+    container_name: turnity-db-prod-local
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    volumes:
+      - postgres_data_prod_local:/var/lib/postgresql/data
+    healthcheck:
+      # $$POSTGRES_USER (con doble $$) se resuelve DENTRO del contenedor,
+      # leyendo la variable que el propio env_file ya inyecto -- no es
+      # sustitucion de docker-compose, evita que este valor se desincronice
+      # de lo que de verdad tiene .env.production.
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - turnity-network-prod-local
+
+  # Job de un solo uso: aplica las migraciones antes de levantar la api.
+  # Mismo patron "release phase" que el Pre-Deploy Command de Render (ver
+  # decision 2b del plan) -- separado del servicio api a proposito, para
+  # que las migraciones nunca corran desde cada replica de la app.
+  migrate:
+    build:
+      context: .
+      target: runtime
+    container_name: turnity-migrate-prod-local
+    env_file:
+      - .env.production
+    command: ['npx', 'prisma', 'migrate', 'deploy']
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - turnity-network-prod-local
+    restart: 'no'
+
+  api:
+    build:
+      context: .
+      target: runtime
+    container_name: turnity-api-prod-local
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    # 3001 en el host (no 3000) para poder correr esto a la vez que
+    # docker-compose.dev.yml sin que compitan por el mismo puerto.
+    ports:
+      - '3001:3000'
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - turnity-network-prod-local
+
+networks:
+  turnity-network-prod-local:
+    driver: bridge
+
+volumes:
+  postgres_data_prod_local:

@@ -1,10 +1,15 @@
 import { PrismaClient, RoleName } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { addDays, subDays, addHours, format, setHours, setMinutes } from 'date-fns';
+import { assertSeedIsAllowed } from './seedGuard';
 
 const prisma = new PrismaClient();
 
 async function main() {
+  // Nunca debe correr contra produccion (borra todos los datos y crea
+  // usuarios con contraseñas conocidas). -- F3
+  assertSeedIsAllowed(process.env.NODE_ENV);
+
   console.log('Iniciando el sembrado de la base de datos...');
 
   const existingUsers = await prisma.user.count();
