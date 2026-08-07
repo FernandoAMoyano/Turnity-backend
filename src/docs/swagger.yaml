@@ -84,7 +84,10 @@ paths:
                   example: "MiPassword123!"
       responses:
         '200':
-          description: Login exitoso
+          description: >-
+            Login exitoso. El refresh token se entrega en una cookie httpOnly
+            (refreshToken); ademas se setea la cookie csrfToken (legible por JS)
+            para el patron double-submit. El body solo incluye el access token.
           content:
             application/json:
               schema:
@@ -100,9 +103,6 @@ paths:
                     type: object
                     properties:
                       token:
-                        type: string
-                        example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                      refreshToken:
                         type: string
                         example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
                       user:
@@ -139,41 +139,107 @@ paths:
         '429':
           $ref: '#/components/responses/Error429'
 
-  /auth/refresh-token:
-    post:
+  /auth/csrf:
+    get:
       tags: [Authentication]
-      summary: Renovar token de acceso
+      summary: Emitir token CSRF
       description: >-
-        Renueva el par de tokens a partir de un refresh token válido. Un token corrupto o
-        expirado devuelve 401. Si el usuario asociado tiene un rol inexistente (corrupción de
-        datos referencial), devuelve 404 en vez de enmascararlo como 401.
+        Setea la cookie 'csrfToken' (legible por JS) y devuelve el token en el body.
+        El cliente debe reenviarlo en el header X-CSRF-Token en /refresh-token,
+        /logout y /logout-all (patron double-submit).
       security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [refreshToken]
-              properties:
-                refreshToken:
-                  type: string
-                  example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
       responses:
         '200':
-          description: Token renovado exitosamente
+          description: Token CSRF emitido (cookie csrfToken + body)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SuccessResponse'
-        '400':
-          $ref: '#/components/responses/Error400'
+
+  /auth/refresh-token:
+    post:
+      tags: [Authentication]
+      summary: Renovar token de acceso (rotacion)
+      description: >-
+        Rota la sesion: emite un access token nuevo y un refresh nuevo. El refresh
+        viaja por la cookie httpOnly 'refreshToken' (no en el body) y se rota en cada
+        uso; reusar un refresh ya rotado revoca toda la familia (RFC 9700 4.14).
+        Requiere el header CSRF (double-submit). El body solo incluye el access token.
+      security: []
+      parameters:
+        - name: X-CSRF-Token
+          in: header
+          required: true
+          schema:
+            type: string
+          description: Debe coincidir con la cookie csrfToken (double-submit)
+      responses:
+        '200':
+          description: Token renovado (access nuevo en body, refresh nuevo en cookie)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
         '401':
           $ref: '#/components/responses/Error401'
+        '403':
+          description: Token CSRF invalido o ausente
         '404':
           $ref: '#/components/responses/Error404'
         '429':
           $ref: '#/components/responses/Error429'
+
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      summary: Cerrar la sesion actual
+      description: >-
+        Revoca la sesion del refresh token (cookie 'refreshToken') y borra las
+        cookies de auth. Idempotente. Requiere autenticacion (Bearer) y header CSRF.
+      parameters:
+        - name: X-CSRF-Token
+          in: header
+          required: true
+          schema:
+            type: string
+          description: Debe coincidir con la cookie csrfToken (double-submit)
+      responses:
+        '200':
+          description: Sesion cerrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          description: Token CSRF invalido o ausente
+
+  /auth/logout-all:
+    post:
+      tags: [Authentication]
+      summary: Cerrar todas las sesiones
+      description: >-
+        Revoca todas las sesiones activas del usuario ("logout de todos los
+        dispositivos") y borra las cookies. Requiere autenticacion (Bearer) y header CSRF.
+      parameters:
+        - name: X-CSRF-Token
+          in: header
+          required: true
+          schema:
+            type: string
+          description: Debe coincidir con la cookie csrfToken (double-submit)
+      responses:
+        '200':
+          description: Sesiones revocadas (incluye revokedCount)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          description: Token CSRF invalido o ausente
 
   /auth/profile:
     get:

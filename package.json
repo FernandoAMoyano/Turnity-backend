@@ -11,6 +11,8 @@
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
+    "build:prod": "tsc -p tsconfig.build.json",
+    "postbuild:prod": "mkdir -p dist/docs && cp src/docs/swagger.yaml dist/docs/swagger.yaml",
     "prisma:studio": "prisma studio",
     "prisma:format": "prisma format",
     "prisma:generate": "prisma generate",
@@ -30,6 +32,8 @@
     "docker:dev:down": "docker-compose -f docker-compose.dev.yml down",
     "docker:npm:install": "docker exec -it turnity-api-dev npm install",
     "docker:prisma:migrate:dev": "docker exec -it turnity-api-dev npx prisma migrate dev",
+    "docker:prisma:migrate:deploy": "docker exec -it turnity-api-dev npx prisma migrate deploy",
+    "docker:prisma:migrate:status": "docker exec -it turnity-api-dev npx prisma migrate status",
     "docker:generate:prisma:client": "docker exec -it turnity-api-dev npx prisma generate",
     "docker:db:prisma:seed": "docker exec -it turnity-api-dev npx prisma db seed",
     "docker:db:reset": "docker exec -it turnity-api-dev npx prisma migrate reset --force",
@@ -45,6 +49,7 @@
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
+    "prisma": "^6.19.3",
     "bcrypt": "^6.0.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -83,13 +88,12 @@
     "@types/swagger-ui-express": "^4.1.8",
     "@types/uuid": "^10.0.0",
     "@types/yamljs": "^0.2.34",
-    "@typescript-eslint/eslint-plugin": "^6.15.0",
-    "@typescript-eslint/parser": "^6.15.0",
+    "@typescript-eslint/eslint-plugin": "^8.65.0",
+    "@typescript-eslint/parser": "^8.65.0",
     "eslint": "^8.57.1",
     "eslint-config-prettier": "^10.1.5",
     "jest": "^30.4.2",
     "prettier": "^3.5.3",
-    "prisma": "^6.19.3",
     "supertest": "^7.1.0",
     "ts-jest": "^29.4.11",
     "tsx": "^4.20.1",
@@ -97,5 +101,14 @@
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
+  },
+  "overrides": {
+    "brace-expansion": "^5.0.9",
+    "fast-uri": "^3.1.5",
+    "ip-address": "^10.3.1",
+    "js-yaml": "^4.3.1",
+    "@istanbuljs/load-nyc-config": {
+      "js-yaml": "^3.15.1"
+    }
   }
 }

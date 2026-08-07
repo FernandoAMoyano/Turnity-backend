@@ -22,6 +22,11 @@
       "type": "string"
     },
     {
+      "key": "csrf_token",
+      "value": "",
+      "type": "string"
+    },
+    {
       "key": "user_id_to_deactivate",
       "value": "",
       "type": "string"
@@ -98,6 +103,8 @@
                   "if (pm.response.code === 201) {",
                   "    const response = pm.response.json();",
                   "    console.log('Estilista registrado:', response.data.email);",
+                  "    pm.collectionVariables.set('user_id_to_deactivate', response.data.id);",
+                  "    console.log('user_id_to_deactivate seteado:', response.data.id);",
                   "    pm.test('Estilista registrado con rol correcto', function () {",
                   "        pm.expect(response.data.role.name).to.eql('STYLIST');",
                   "    });",
@@ -174,7 +181,8 @@
                   "if (pm.response.code === 200) {",
                   "    const response = pm.response.json();",
                   "    pm.collectionVariables.set('jwt_token', response.data.token);",
-                  "    pm.collectionVariables.set('refresh_token', response.data.refreshToken);",
+                  "    const csrf = pm.cookies.get('csrfToken');",
+                  "    if (csrf) pm.collectionVariables.set('csrf_token', csrf);",
                   "    console.log('Login exitoso:', response.data.user.email);",
                   "    console.log('Token guardado automáticamente');",
                   "    pm.test('Login exitoso', function () {",
@@ -216,7 +224,8 @@
                   "if (pm.response.code === 200) {",
                   "    const response = pm.response.json();",
                   "    pm.collectionVariables.set('jwt_token', response.data.token);",
-                  "    pm.collectionVariables.set('refresh_token', response.data.refreshToken);",
+                  "    const csrf = pm.cookies.get('csrfToken');",
+                  "    if (csrf) pm.collectionVariables.set('csrf_token', csrf);",
                   "    console.log('Token renovado exitosamente');",
                   "    pm.test('Token renovado', function () {",
                   "        pm.expect(response.data.token).to.not.be.empty;",
@@ -230,20 +239,115 @@
             "method": "POST",
             "header": [
               {
-                "key": "Content-Type",
-                "value": "application/json"
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"refreshToken\": \"{{refresh_token}}\"\n}"
-            },
             "url": {
               "raw": "{{base_url}}/auth/refresh-token",
               "host": ["{{base_url}}"],
               "path": ["auth", "refresh-token"]
             },
-            "description": "Renueva el JWT token usando el refresh token guardado"
+            "description": "Renueva el access token por ROTACION. El refresh viaja por la cookie httpOnly 'refreshToken' (Postman la envia desde su cookie jar); requiere el header X-CSRF-Token (double-submit). El body ya no lleva el refresh."
+          }
+        },
+        {
+          "name": "Logout",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Logout exitoso', function () {",
+                  "    pm.expect(pm.response.code).to.eql(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}",
+                "type": "text"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/logout",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "logout"]
+            },
+            "description": "Revoca la sesion actual (cookie refreshToken) y borra las cookies. Requiere Bearer + header CSRF. Nota: al borrar la cookie csrfToken, si luego se llama a otro endpoint con CSRF hay que reobtenerla (Get CSRF Token)."
+          }
+        },
+        {
+          "name": "Get CSRF Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const csrf = pm.cookies.get('csrfToken') || pm.response.json().data.csrfToken;",
+                  "    if (csrf) pm.collectionVariables.set('csrf_token', csrf);",
+                  "    console.log('CSRF token emitido');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": { "type": "noauth" },
+            "url": {
+              "raw": "{{base_url}}/auth/csrf",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "csrf"]
+            },
+            "description": "Emite la cookie csrfToken (y la devuelve en el body). Guarda csrf_token para el header X-CSRF-Token de refresh/logout."
+          }
+        },
+        {
+          "name": "Logout All",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Logout-all exitoso', function () {",
+                  "    pm.expect(pm.response.code).to.eql(200);",
+                  "    pm.expect(pm.response.json().data).to.have.property('revokedCount');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{jwt_token}}",
+                "type": "text"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrf_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/logout-all",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "logout-all"]
+            },
+            "description": "Revoca todas las sesiones del usuario (logout de todos los dispositivos). Requiere Bearer + header CSRF."
           }
         }
       ]
@@ -427,6 +531,41 @@
       "description": "Gestión de usuarios por administradores",
       "item": [
         {
+          "name": "Setup: Login Admin (para deactivate)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    pm.collectionVariables.set('jwt_token', pm.response.json().data.token);",
+                  "    console.log('Admin logueado para pruebas de deactivate');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@turnity.com\",\n  \"password\": \"admin123\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "login"]
+            },
+            "description": "Deja jwt_token con un token ADMIN antes de los tests de desactivacion (los requests siguientes requieren rol ADMIN)."
+          }
+        },
+        {
           "name": "Deactivate User (STYLIST cascade)",
           "event": [
             {
@@ -593,7 +732,8 @@
                   "if (pm.response.code === 200) {",
                   "    const response = pm.response.json();",
                   "    pm.collectionVariables.set('jwt_token', response.data.token);",
-                  "    pm.collectionVariables.set('refresh_token', response.data.refreshToken);",
+                  "    const csrf = pm.cookies.get('csrfToken');",
+                  "    if (csrf) pm.collectionVariables.set('csrf_token', csrf);",
                   "    console.log('Admin login exitoso');",
                   "}"
                 ]
@@ -630,7 +770,8 @@
                   "if (pm.response.code === 200) {",
                   "    const response = pm.response.json();",
                   "    pm.collectionVariables.set('jwt_token', response.data.token);",
-                  "    pm.collectionVariables.set('refresh_token', response.data.refreshToken);",
+                  "    const csrf = pm.cookies.get('csrfToken');",
+                  "    if (csrf) pm.collectionVariables.set('csrf_token', csrf);",
                   "    console.log('Cliente María login exitoso');",
                   "}"
                 ]
@@ -667,7 +808,8 @@
                   "if (pm.response.code === 200) {",
                   "    const response = pm.response.json();",
                   "    pm.collectionVariables.set('jwt_token', response.data.token);",
-                  "    pm.collectionVariables.set('refresh_token', response.data.refreshToken);",
+                  "    const csrf = pm.cookies.get('csrfToken');",
+                  "    if (csrf) pm.collectionVariables.set('csrf_token', csrf);",
                   "    console.log('Estilista Lucía login exitoso');",
                   "}"
                 ]

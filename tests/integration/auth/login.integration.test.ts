@@ -13,10 +13,18 @@ describe('Login Integration Tests', () => {
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
       expect(response.body.data).toHaveProperty('token');
-      expect(response.body.data).toHaveProperty('refreshToken');
+      // El refresh ya no viaja en el body, sino en cookie httpOnly (F5b)
+      expect(response.body.data).not.toHaveProperty('refreshToken');
       expect(response.body.data).toHaveProperty('user');
       expect(response.body.data.user.email).toBe('admin@turnity.com');
       expect(response.body.data.user.role.name).toBe('ADMIN');
+
+      const setCookie = response.headers['set-cookie'] as unknown as string[];
+      const refreshCookie = setCookie.find((c) => c.startsWith('refreshToken='));
+      const csrfCookie = setCookie.find((c) => c.startsWith('csrfToken='));
+      expect(refreshCookie).toBeDefined();
+      expect(refreshCookie).toContain('HttpOnly');
+      expect(csrfCookie).toBeDefined();
     });
 
     // Debería rechazar credenciales inválidas

@@ -66,7 +66,7 @@ export class AuthMiddleware {
       };
 
       next();
-    } catch (error) {
+    } catch {
       next(new UnauthorizedError('Invalid or expired token'));
     }
   };

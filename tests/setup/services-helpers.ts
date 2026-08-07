@@ -147,6 +147,12 @@ export const createTestStylist = async (): Promise<{
     throw new Error(`Failed to create test stylist user: ${userResponse.status}`);
   }
 
+  // Gating de login activo en test: verificar el email con el devToken (expuesto en test)
+  const devToken = userResponse.body.devToken;
+  if (devToken) {
+    await request(app).post('/api/v1/auth/verify-email').send({ token: devToken });
+  }
+
   const user = userResponse.body.data;
 
   // StylistService.stylistId ahora es User.id directamente, no se necesita tabla Stylist

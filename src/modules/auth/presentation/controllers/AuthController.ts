@@ -7,18 +7,39 @@ import { GetUserProfile } from '../../application/use-cases/GetUserProfile';
 import { UpdateUserProfile } from '../../application/use-cases/UpdateUserProfile';
 import { ChangeUserPassword } from '../../application/use-cases/ChangeUserPassword';
 import { DeactivateUser } from '../../application/use-cases/DeactivateUser';
+import { LogoutUser } from '../../application/use-cases/LogoutUser';
+import { LogoutAllSessions } from '../../application/use-cases/LogoutAllSessions';
+import { VerifyEmail } from '../../application/use-cases/VerifyEmail';
+import { ResendVerification } from '../../application/use-cases/ResendVerification';
+import { ForgotPassword } from '../../application/use-cases/ForgotPassword';
+import { ResetPassword } from '../../application/use-cases/ResetPassword';
 import { AuthenticatedRequest } from '../middleware/AuthMiddleware';
+import { generateCsrfToken } from '../middleware/CsrfMiddleware';
+import {
+  REFRESH_COOKIE_NAME,
+  CSRF_COOKIE_NAME,
+  refreshCookieOptions,
+  refreshClearOptions,
+  csrfCookieOptions,
+  csrfClearOptions,
+} from '../utils/cookieOptions';
 import { RegisterDto } from '../../application/dto/request/RegisterDto';
 import { LoginDto } from '../../application/dto/request/LoginDto';
 import { UpdateProfileDto } from '../../application/dto/request/UpdateProfileDto';
 import { ChangePasswordDto } from '../../application/dto/request/ChangePasswordDto';
+import { VerifyEmailDto } from '../../application/dto/request/VerifyEmailDto';
+import { ResendVerificationDto } from '../../application/dto/request/ResendVerificationDto';
+import { ForgotPasswordDto } from '../../application/dto/request/ForgotPasswordDto';
+import { ResetPasswordDto } from '../../application/dto/request/ResetPasswordDto';
 import { UnauthorizedError } from '../../../../shared/exceptions/UnauthorizedError';
+import { devTokenField } from '../../../../shared/utils/devToken';
 
 /**
  * Controlador de autenticación que maneja peticiones HTTP
  * relacionadas con usuarios. Coordina las operaciones de
  * login, registro, renovación de tokens y gestión de perfiles.
- * Los errores burbujean al errorHandler global via .catch(next) en AuthRoutes.
+ * Los métodos no capturan errores: los dejan propagar para que el errorHandler
+ * global arme la respuesta uniforme.
  */
 export class AuthController {
   constructor(
@@ -29,6 +50,12 @@ export class AuthController {
     private updateUserProfile: UpdateUserProfile,
     private changeUserPassword: ChangeUserPassword,
     private deactivateUserUseCase: DeactivateUser,
+    private logoutUseCase: LogoutUser,
+    private logoutAllUseCase: LogoutAllSessions,
+    private verifyEmailUseCase: VerifyEmail,
+    private resendVerificationUseCase: ResendVerification,
+    private forgotPasswordUseCase: ForgotPassword,
+    private resetPasswordUseCase: ResetPassword,
   ) {}
 
   /**
@@ -44,11 +71,16 @@ export class AuthController {
    */
   async login(req: Request, res: Response): Promise<Response> {
     const loginDto: LoginDto = req.body;
-    const result = await this.loginUser.execute(loginDto);
+    const result = await this.loginUser.execute(loginDto, this.requestContext(req));
+
+    // El refresh viaja en cookie httpOnly (no en el body). Se emite ademas la
+    // cookie CSRF (legible por JS) para el patron double-submit.
+    this.issueRefreshCookie(res, result.refreshToken);
+    this.issueCsrfCookie(res);
 
     return res.status(200).json({
       success: true,
-      data: result,
+      data: { token: result.token, user: result.user },
       message: 'Login successful',
     });
   }
@@ -71,8 +103,89 @@ export class AuthController {
 
     return res.status(201).json({
       success: true,
-      data: result,
+      data: result.user,
       message: 'User registered successfully',
+      // devToken solo en no-produccion con EXPOSE_VERIFICATION_TOKENS (pruebas por API)
+      ...devTokenField(result.verificationToken),
+    });
+  }
+
+  /**
+   * Verifica el email de un usuario a partir del token del enlace
+   * @route POST /auth/verify-email
+   * @param req - Request con { token } en el body
+   * @param res - Response de Express
+   * @returns Promise<Response>
+   * @responseStatus 200 - Email verificado exitosamente
+   * @throws InvalidTokenError si el token es invalido, de otro tipo, expirado o ya usado
+   */
+  async verifyEmail(req: Request, res: Response): Promise<Response> {
+    const { token }: VerifyEmailDto = req.body;
+    await this.verifyEmailUseCase.execute(token);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Email verified successfully',
+    });
+  }
+
+  /**
+   * Reenvia el email de verificacion. Respuesta uniforme (anti-enumeracion):
+   * identica exista o no el email y este verificado o no.
+   * @route POST /auth/resend-verification
+   * @param req - Request con { email } en el body
+   * @param res - Response de Express
+   * @returns Promise<Response>
+   * @responseStatus 200 - Respuesta generica
+   */
+  async resendVerification(req: Request, res: Response): Promise<Response> {
+    const { email }: ResendVerificationDto = req.body;
+    const result = await this.resendVerificationUseCase.execute(email);
+
+    return res.status(200).json({
+      success: true,
+      message: 'If an account exists for that email, a verification link has been sent',
+      ...devTokenField(result.verificationToken),
+    });
+  }
+
+  /**
+   * Solicita el reset de password. Respuesta uniforme (anti-enumeracion):
+   * identica exista o no el email.
+   * @route POST /auth/forgot-password
+   * @param req - Request con { email } en el body
+   * @param res - Response de Express
+   * @returns Promise<Response>
+   * @responseStatus 200 - Respuesta generica
+   */
+  async forgotPassword(req: Request, res: Response): Promise<Response> {
+    const { email }: ForgotPasswordDto = req.body;
+    const result = await this.forgotPasswordUseCase.execute(email);
+
+    return res.status(200).json({
+      success: true,
+      message: 'If an account exists for that email, a password reset link has been sent',
+      ...devTokenField(result.resetToken),
+    });
+  }
+
+  /**
+   * Aplica el reset de password con el token del enlace. Revoca todas las sesiones.
+   * @route POST /auth/reset-password
+   * @param req - Request con { token, password } en el body
+   * @param res - Response de Express
+   * @returns Promise<Response>
+   * @responseStatus 200 - Password actualizada exitosamente
+   * @throws InvalidTokenError si el token es invalido, expirado o ya usado
+   * @throws ValidationError si la nueva password no cumple las reglas de fuerza
+   */
+  async resetPassword(req: Request, res: Response): Promise<Response> {
+    const dto: ResetPasswordDto = req.body;
+    await this.resetPasswordUseCase.execute(dto);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Password reset successfully',
     });
   }
 
@@ -88,13 +201,33 @@ export class AuthController {
    * @throws UnauthorizedError si el refresh token es inválido o expirado
    */
   async refreshToken(req: Request, res: Response): Promise<Response> {
-    const { refreshToken } = req.body;
-    const result = await this.refreshTokenUseCase.execute(refreshToken);
+    const refreshToken: string = req.cookies?.[REFRESH_COOKIE_NAME] ?? '';
+    const result = await this.refreshTokenUseCase.execute(refreshToken, this.requestContext(req));
+
+    // Rotacion: se reemplaza la cookie de refresh por el token nuevo.
+    // La cookie CSRF se mantiene (no hace falta rotarla en cada refresh).
+    this.issueRefreshCookie(res, result.refreshToken);
 
     return res.status(200).json({
       success: true,
-      data: result,
+      data: { token: result.token, user: result.user },
       message: 'Token refreshed successfully',
+    });
+  }
+
+  /**
+   * Emite un token CSRF (patron double-submit)
+   * @route GET /auth/csrf
+   * @description Setea la cookie 'csrfToken' (legible por JS) y devuelve el token
+   * en el body para que el cliente lo reenvie en el header X-CSRF-Token.
+   * @responseStatus 200 - Token CSRF emitido
+   */
+  async csrf(req: Request, res: Response): Promise<Response> {
+    const csrfToken = this.issueCsrfCookie(res);
+    return res.status(200).json({
+      success: true,
+      data: { csrfToken },
+      message: 'CSRF token issued',
     });
   }
 
@@ -202,5 +335,94 @@ export class AuthController {
       data: result,
       message: 'User deactivated successfully',
     });
+  }
+
+  /**
+   * Cierra la sesión actual revocando el refresh token recibido
+   * @route POST /auth/logout
+   * @param req - Request autenticado; refreshToken en el body
+   * @param res - Response de Express
+   * @returns Promise<Response>
+   * @description Revoca la sesión del refresh token. Idempotente.
+   * @responseStatus 200 - Sesión cerrada
+   * @throws UnauthorizedError si el request no está autenticado
+   */
+  async logout(req: AuthenticatedRequest, res: Response): Promise<Response> {
+    if (!req.user?.userId) {
+      throw new UnauthorizedError('Authentication required');
+    }
+
+    const refreshToken: string = req.cookies?.[REFRESH_COOKIE_NAME] ?? '';
+    await this.logoutUseCase.execute(req.user.userId, refreshToken);
+    this.clearAuthCookies(res);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Logged out successfully',
+    });
+  }
+
+  /**
+   * Cierra todas las sesiones del usuario (logout de todos los dispositivos)
+   * @route POST /auth/logout-all
+   * @param req - Request autenticado
+   * @param res - Response de Express
+   * @returns Promise<Response>
+   * @description Revoca todas las sesiones activas del usuario
+   * @responseStatus 200 - Sesiones revocadas con su cantidad
+   * @throws UnauthorizedError si el request no está autenticado
+   */
+  async logoutAll(req: AuthenticatedRequest, res: Response): Promise<Response> {
+    if (!req.user?.userId) {
+      throw new UnauthorizedError('Authentication required');
+    }
+
+    const revokedCount = await this.logoutAllUseCase.execute(req.user.userId);
+    this.clearAuthCookies(res);
+
+    return res.status(200).json({
+      success: true,
+      data: { revokedCount },
+      message: 'All sessions revoked successfully',
+    });
+  }
+
+  /**
+   * Arma el contexto de la request para auditoria de la sesion (RFC 6819)
+   * @private
+   */
+  private requestContext(req: Request) {
+    return {
+      requestId: req.id,
+      userAgent: req.get('user-agent') ?? null,
+      ipAddress: req.ip ?? null,
+    };
+  }
+
+  /**
+   * Setea la cookie httpOnly con el refresh token opaco
+   * @private
+   */
+  private issueRefreshCookie(res: Response, token: string): void {
+    res.cookie(REFRESH_COOKIE_NAME, token, refreshCookieOptions());
+  }
+
+  /**
+   * Genera y setea la cookie CSRF (legible por JS); devuelve el token
+   * @private
+   */
+  private issueCsrfCookie(res: Response): string {
+    const token = generateCsrfToken();
+    res.cookie(CSRF_COOKIE_NAME, token, csrfCookieOptions());
+    return token;
+  }
+
+  /**
+   * Borra las cookies de refresh y CSRF (logout)
+   * @private
+   */
+  private clearAuthCookies(res: Response): void {
+    res.clearCookie(REFRESH_COOKIE_NAME, refreshClearOptions());
+    res.clearCookie(CSRF_COOKIE_NAME, csrfClearOptions());
   }
 }

@@ -1,4 +1,4 @@
-import { RoleName } from '@prisma/client';
+import { RoleName, VerificationTokenType } from '@prisma/client';
 import { ConflictError } from '../../../../shared/exceptions/ConflictError';
 import { NotFoundError } from '../../../../shared/exceptions/NotFoundError';
 import { ValidationError } from '../../../../shared/exceptions/ValidationError';
@@ -10,6 +10,20 @@ import { IUserRepository } from '../../domain/repositories/IUserRepository';
 import { RegisterDto } from '../dto/request/RegisterDto';
 import { UserDto } from '../dto/response/UserDto';
 import { HashService } from '../services/HashService';
+import { VerificationTokenService } from '../services/VerificationTokenService';
+import { EmailService } from '../../../../shared/email/EmailService';
+import { env } from '../../../../shared/config/env';
+import { logger } from '../../../../shared/logger/logger';
+
+/**
+ * Resultado del registro: el usuario creado y, solo en no-produccion con el flag
+ * EXPOSE_VERIFICATION_TOKENS, el token de verificacion en claro (para pruebas por
+ * API/Postman mientras no hay frontend). El controller decide si exponerlo.
+ */
+export interface RegisterResult {
+  user: UserDto;
+  verificationToken?: string;
+}
 
 /**
  * Caso de uso para registrar nuevos usuarios en el sistema
@@ -20,6 +34,8 @@ export class RegisterUser {
     private userRepository: IUserRepository,
     private roleRepository: IRoleRepository,
     private hashService: HashService,
+    private verificationTokenService: VerificationTokenService,
+    private emailService: EmailService,
   ) {}
 
   /**
@@ -31,7 +47,7 @@ export class RegisterUser {
    * @throws NotFoundError si el rol especificado no existe
    * @description Valida datos, verifica unicidad del email, hashea contraseña y crea usuario con rol asignado
    */
-  async execute(registerDto: RegisterDto): Promise<UserDto> {
+  async execute(registerDto: RegisterDto): Promise<RegisterResult> {
     // Validaciones
     this.validateRegisterDto(registerDto);
 
@@ -62,7 +78,40 @@ export class RegisterUser {
     // Guardar usuario
     const savedUser = await this.userRepository.save(user);
 
-    return this.mapUserToDto(savedUser, role);
+    // Verificacion de email: emitir token + enviar (best-effort). El registro NO
+    // falla si esto falla; el usuario siempre puede pedir el reenvio.
+    const verificationToken = await this.issueAndSendVerification(savedUser);
+
+    return { user: this.mapUserToDto(savedUser, role), verificationToken };
+  }
+
+  /**
+   * Emite el token de verificacion de email y envia el correo (best-effort)
+   * @param user - Usuario recien creado
+   * @returns el token en claro si se emitio, o undefined si algo fallo
+   * @private
+   */
+  private async issueAndSendVerification(user: User): Promise<string | undefined> {
+    try {
+      const { token } = await this.verificationTokenService.issue(
+        user.id,
+        VerificationTokenType.EMAIL_VERIFICATION,
+      );
+      const verificationUrl = `${env.FRONTEND_URL}/verify-email?token=${encodeURIComponent(token)}`;
+      await this.emailService.sendVerificationEmail({
+        to: user.email,
+        name: user.name,
+        verificationUrl,
+        expiresInHours: env.EMAIL_VERIFICATION_TOKEN_TTL_HOURS,
+      });
+      return token;
+    } catch (error) {
+      logger.error('[auth] fallo al emitir/enviar la verificacion de email en el registro', {
+        userId: user.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
   }
 
   /**

@@ -1,12 +1,26 @@
 import { IUserRepository, UserWithRole } from '../../domain/repositories/IUserRepository';
+import { IRefreshTokenRepository } from '../../domain/repositories/IRefreshTokenRepository';
 import { HashService } from '../services/HashService';
 import { JwtPayload, JwtService } from '../services/JwtService';
+import { RefreshTokenService } from '../services/RefreshTokenService';
 import { LoginDto } from '../dto/request/LoginDto';
 import { LoginResponseDto } from '../dto/response/LoginResponseDto';
 import { UserDto } from '../dto/response/UserDto';
 import { isValidEmail } from '../../../../shared/utils/validation';
+import { generateUuid } from '../../../../shared/utils/uuid';
 import { ValidationError } from '../../../../shared/exceptions/ValidationError';
 import { UnauthorizedError } from '../../../../shared/exceptions/UnauthorizedError';
+import { EmailNotVerifiedError } from '../../../../shared/exceptions/EmailNotVerifiedError';
+import { env } from '../../../../shared/config/env';
+
+/**
+ * Contexto opcional de la request para auditar la sesión (RFC 6819).
+ * Lo provee la capa HTTP.
+ */
+export interface LoginContext {
+  userAgent?: string | null;
+  ipAddress?: string | null;
+}
 
 /**
  * Caso de uso para autenticar usuarios en el sistema
@@ -17,6 +31,8 @@ export class LoginUser {
     private userRepository: IUserRepository,
     private hashService: HashService,
     private jwtService: JwtService,
+    private refreshTokenRepository: IRefreshTokenRepository,
+    private refreshTokenService: RefreshTokenService,
   ) {}
 
   /**
@@ -27,7 +43,7 @@ export class LoginUser {
    * @throws UnauthorizedError si las credenciales son incorrectas o el usuario está inactivo
    * @description Valida formato de email, verifica credenciales, genera tokens JWT y retorna datos del usuario
    */
-  async execute(loginDto: LoginDto): Promise<LoginResponseDto> {
+  async execute(loginDto: LoginDto, context?: LoginContext): Promise<LoginResponseDto> {
     if (!loginDto.email || !isValidEmail(loginDto.email)) {
       throw new ValidationError('Invalid email format');
     }
@@ -58,6 +74,13 @@ export class LoginUser {
       throw new UnauthorizedError('Invalid credentials');
     }
 
+    // Gating de verificacion de email (F-auth). Se chequea DESPUES de validar las
+    // credenciales para no filtrar el estado de verificacion a quien no conoce la
+    // password. Gateado por REQUIRE_EMAIL_VERIFICATION (default true).
+    if (env.REQUIRE_EMAIL_VERIFICATION && !userWithRole.emailVerified) {
+      throw new EmailNotVerifiedError();
+    }
+
     // Generar tokens
     const jwtPayload: JwtPayload = {
       userId: userWithRole.id,
@@ -66,11 +89,24 @@ export class LoginUser {
     };
 
     const token = this.jwtService.generateAccessToken(jwtPayload);
-    const refreshToken = this.jwtService.generateRefreshToken(jwtPayload);
+
+    // Refresh opaco + persistencia de la sesión (nueva familia por login).
+    // El token en claro se devuelve para que la capa HTTP lo entregue al
+    // cliente (en F5b pasará a cookie httpOnly); en la base solo queda su hash.
+    // La rotación/reuse se maneja en el caso de uso RefreshToken (F4).
+    const generated = this.refreshTokenService.generate();
+    await this.refreshTokenRepository.create({
+      familyId: generateUuid(),
+      userId: userWithRole.id,
+      tokenHash: generated.hash,
+      expiresAt: generated.expiresAt,
+      userAgent: context?.userAgent ?? null,
+      ipAddress: context?.ipAddress ?? null,
+    });
 
     return {
       token,
-      refreshToken,
+      refreshToken: generated.token,
       user: this.mapUserToDto(userWithRole, role),
     };
   }

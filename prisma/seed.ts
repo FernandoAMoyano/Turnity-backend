@@ -1,10 +1,15 @@
 import { PrismaClient, RoleName } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { addDays, subDays, addHours, format, setHours, setMinutes } from 'date-fns';
+import { assertSeedIsAllowed } from './seedGuard';
 
 const prisma = new PrismaClient();
 
 async function main() {
+  // Nunca debe correr contra produccion (borra todos los datos y crea
+  // usuarios con contraseñas conocidas). -- F3
+  assertSeedIsAllowed(process.env.NODE_ENV);
+
   console.log('Iniciando el sembrado de la base de datos...');
 
   const existingUsers = await prisma.user.count();
@@ -62,6 +67,8 @@ async function main() {
     data: {
       name: 'Admin Usuario',
       email: 'admin@turnity.com',
+      emailVerified: true,
+      emailVerifiedAt: new Date(),
       phone: '123456789',
       password: adminPassword,
       roleId: adminRole.id,
@@ -76,6 +83,8 @@ async function main() {
     data: {
       name: 'Maria Garcia',
       email: 'maria@example.com',
+      emailVerified: true,
+      emailVerifiedAt: new Date(),
       phone: '612345678',
       password: clientPassword,
       roleId: clientRole.id,
@@ -88,6 +97,8 @@ async function main() {
     data: {
       name: 'Juan Perez',
       email: 'juan@example.com',
+      emailVerified: true,
+      emailVerifiedAt: new Date(),
       phone: '623456789',
       password: clientPassword,
       roleId: clientRole.id,
@@ -102,6 +113,8 @@ async function main() {
     data: {
       name: 'Lucia Rodriguez',
       email: 'lucia@turnity.com',
+      emailVerified: true,
+      emailVerifiedAt: new Date(),
       phone: '634567890',
       password: stylistPassword,
       roleId: stylistRole.id,
@@ -113,6 +126,8 @@ async function main() {
     data: {
       name: 'Carlos Sanchez',
       email: 'carlos@turnity.com',
+      emailVerified: true,
+      emailVerifiedAt: new Date(),
       phone: '645678901',
       password: stylistPassword,
       roleId: stylistRole.id,

@@ -51,7 +51,24 @@ export const createTestUser = async (roleType: 'CLIENT' | 'ADMIN' | 'STYLIST' = 
     throw new Error(`Registro falló: ${response.status}`);
   }
 
+  // Gating de login activo en test: verificamos el email con el devToken (expuesto
+  // en test via EXPOSE_VERIFICATION_TOKENS) para que el usuario pueda loguear.
+  const devToken = response.body.devToken;
+  if (devToken) {
+    await request(app).post('/api/v1/auth/verify-email').send({ token: devToken });
+  }
+
   return response.body.data;
+};
+
+// Extrae el valor de una cookie desde el array Set-Cookie de una respuesta
+export const extractCookie = (
+  setCookie: string[] | undefined,
+  name: string,
+): string | undefined => {
+  if (!setCookie) return undefined;
+  const found = setCookie.find((c) => c.startsWith(`${name}=`));
+  return found ? found.split(';')[0].slice(name.length + 1) : undefined;
 };
 
 export const loginTestUser = async () => {
@@ -68,9 +85,13 @@ export const loginTestUser = async () => {
     throw new Error(`Login falló: ${response.status}`);
   }
 
+  const setCookie = response.headers['set-cookie'] as unknown as string[] | undefined;
+
   return {
     token: response.body.data.token,
-    refreshToken: response.body.data.refreshToken,
+    // El refresh y el CSRF ahora viajan por cookie (F5b), no en el body.
+    refreshToken: extractCookie(setCookie, 'refreshToken'),
+    csrfToken: extractCookie(setCookie, 'csrfToken'),
     user: response.body.data.user,
   };
 };

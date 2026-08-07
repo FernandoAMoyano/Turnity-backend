@@ -15,9 +15,15 @@ describe('Auth Complete Flow E2E Tests', () => {
     });
 
     expect(loginResponse.status).toBe(200);
-    const { token, refreshToken } = loginResponse.body.data;
+    const { token } = loginResponse.body.data;
     expect(token).toBeDefined();
-    expect(refreshToken).toBeDefined();
+
+    // El refresh y el CSRF viajan por cookie (F5b)
+    const setCookie = loginResponse.headers['set-cookie'] as unknown as string[];
+    const refreshCookie = setCookie.find((c) => c.startsWith('refreshToken='))!.split(';')[0];
+    const csrfCookie = setCookie.find((c) => c.startsWith('csrfToken='))!.split(';')[0];
+    const csrfValue = csrfCookie.split('=')[1];
+    expect(refreshCookie).toBeDefined();
 
     // 3. Obtener perfil
     const profileResponse = await request(app)
@@ -27,10 +33,11 @@ describe('Auth Complete Flow E2E Tests', () => {
     expect(profileResponse.status).toBe(200);
     expect(profileResponse.body.data.email).toBe(userData.email);
 
-    // 4. Refresh token
+    // 4. Refresh token (cookie httpOnly + header CSRF)
     const refreshResponse = await request(app)
       .post('/api/v1/auth/refresh-token')
-      .send({ refreshToken });
+      .set('Cookie', [refreshCookie, csrfCookie])
+      .set('X-CSRF-Token', csrfValue);
 
     expect(refreshResponse.status).toBe(200);
     expect(refreshResponse.body.data.token).toBeDefined();

@@ -8,3 +8,7 @@ dist
 *.md
 docker-compose*
 Dockerfile*
+tests
+coverage
+logs
+.github

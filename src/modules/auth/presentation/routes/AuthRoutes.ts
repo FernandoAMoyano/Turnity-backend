@@ -7,7 +7,10 @@ import {
   loginRateLimiter,
   registerRateLimiter,
   refreshTokenRateLimiter,
+  resendVerificationRateLimiter,
+  forgotPasswordRateLimiter,
 } from '../../../../shared/middleware/RateLimiter';
+import { csrfProtection } from '../middleware/CsrfMiddleware';
 
 /**
  * Configurador de rutas para el módulo de autenticación
@@ -37,6 +40,11 @@ export class AuthRoutes {
    * - PATCH /auth/users/:id/deactivate - Desactivar usuario (solo ADMIN)
    */
   private setupRoutes(): void {
+    // GET /csrf - Emitir token CSRF (público; setea la cookie csrfToken)
+    this.router.get('/csrf', (req: Request, res: Response, next: NextFunction) => {
+      this.authController.csrf(req, res).catch(next);
+    });
+
     // POST /login - Inicio de sesión (público)
     this.router.post(
       '/login',
@@ -59,14 +67,75 @@ export class AuthRoutes {
       },
     );
 
-    // POST /refresh-token - Renovar token (público)
+    // POST /verify-email - Verificar email (público)
+    this.router.post(
+      '/verify-email',
+      AuthValidations.verifyEmail,
+      ValidationMiddleware.handleValidationErrors,
+      (req: Request, res: Response, next: NextFunction) => {
+        this.authController.verifyEmail(req, res).catch(next);
+      },
+    );
+
+    // POST /resend-verification - Reenviar verificación (público, rate limited, anti-enum)
+    this.router.post(
+      '/resend-verification',
+      resendVerificationRateLimiter,
+      AuthValidations.resendVerification,
+      ValidationMiddleware.handleValidationErrors,
+      (req: Request, res: Response, next: NextFunction) => {
+        this.authController.resendVerification(req, res).catch(next);
+      },
+    );
+
+    // POST /forgot-password - Solicitar reset de password (público, rate limited, anti-enum)
+    this.router.post(
+      '/forgot-password',
+      forgotPasswordRateLimiter,
+      AuthValidations.forgotPassword,
+      ValidationMiddleware.handleValidationErrors,
+      (req: Request, res: Response, next: NextFunction) => {
+        this.authController.forgotPassword(req, res).catch(next);
+      },
+    );
+
+    // POST /reset-password - Aplicar reset de password (público)
+    this.router.post(
+      '/reset-password',
+      AuthValidations.resetPassword,
+      ValidationMiddleware.handleValidationErrors,
+      (req: Request, res: Response, next: NextFunction) => {
+        this.authController.resetPassword(req, res).catch(next);
+      },
+    );
+
+    // POST /refresh-token - Renovar token (público; refresh via cookie httpOnly)
     this.router.post(
       '/refresh-token',
       refreshTokenRateLimiter,
-      AuthValidations.refreshToken,
-      ValidationMiddleware.handleValidationErrors,
+      csrfProtection,
       (req: Request, res: Response, next: NextFunction) => {
         this.authController.refreshToken(req, res).catch(next);
+      },
+    );
+
+    // POST /logout - Cerrar la sesión actual (requiere autenticación; refresh via cookie)
+    this.router.post(
+      '/logout',
+      this.authMiddleware.authenticate.bind(this.authMiddleware),
+      csrfProtection,
+      (req: Request, res: Response, next: NextFunction) => {
+        this.authController.logout(req, res).catch(next);
+      },
+    );
+
+    // POST /logout-all - Cerrar todas las sesiones (requiere autenticación)
+    this.router.post(
+      '/logout-all',
+      this.authMiddleware.authenticate.bind(this.authMiddleware),
+      csrfProtection,
+      (req: Request, res: Response, next: NextFunction) => {
+        this.authController.logoutAll(req, res).catch(next);
       },
     );
 

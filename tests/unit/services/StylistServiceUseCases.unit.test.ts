@@ -62,6 +62,7 @@ describe('StylistService Use Cases', () => {
       update: jest.fn(),
       delete: jest.fn(),
       existsByEmail: jest.fn(),
+      markEmailAsVerified: jest.fn(),
     };
 
     // Mock de UserRoleValidationService (reemplaza el chequeo manual de rol via IUserRepository

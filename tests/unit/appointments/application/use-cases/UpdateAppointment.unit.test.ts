@@ -31,6 +31,11 @@ describe('UpdateAppointment Use Case', () => {
   const getFutureDate = (hoursFromNow: number = 48): Date => {
     const future = new Date();
     future.setHours(future.getHours() + hoursFromNow);
+    // Fija una hora del dia segura (10:00 UTC) para que la cita nunca cruce el
+    // fin de jornada del horario simulado. Sin esto, correr la suite de noche
+    // (UTC tardio) hacia que la cita terminara despues de las 23:59 y disparara
+    // BusinessRuleError('ends after working hours'), volviendo estos tests flaky.
+    future.setUTCHours(10, 0, 0, 0);
     return future;
   };
 

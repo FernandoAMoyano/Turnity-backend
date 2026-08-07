@@ -1,39 +1,48 @@
 import request from 'supertest';
 import app from '../../../src/app';
 
+/**
+ * Helper: registra un CLIENT, verifica su email (gating de login activo en test,
+ * usando el devToken expuesto) y loguea. Devuelve el token y el email.
+ */
+const registerVerifiedAndLogin = async (name: string, emailPrefix: string) => {
+  const email = `${emailPrefix}-${Date.now()}@example.com`;
+
+  const registerResponse = await request(app).post('/api/v1/auth/register').send({
+    name,
+    email,
+    phone: '+1234567890',
+    password: 'TestPass123!',
+    roleName: 'CLIENT',
+  });
+  expect(registerResponse.status).toBe(201);
+
+  await request(app)
+    .post('/api/v1/auth/verify-email')
+    .send({ token: registerResponse.body.devToken });
+
+  const loginResponse = await request(app).post('/api/v1/auth/login').send({
+    email,
+    password: 'TestPass123!',
+  });
+  expect(loginResponse.status).toBe(200);
+
+  return { token: loginResponse.body.data.token as string, email };
+};
+
 describe('Profile Integration Tests', () => {
   describe('GET /api/v1/auth/profile', () => {
     // Debería obtener el perfil del usuario con token válido
     it('should get user profile with valid token', async () => {
-      const registerResponse = await request(app)
-        .post('/api/v1/auth/register')
-        .send({
-          name: 'Profile Test User',
-          email: `profile-test-${Date.now()}@example.com`,
-          phone: '+1234567890',
-          password: 'TestPass123!',
-          roleName: 'CLIENT',
-        });
+      const { token, email } = await registerVerifiedAndLogin('Profile Test User', 'profile-test');
 
-      expect(registerResponse.status).toBe(201);
-
-      // Login para obtener token
-      const loginResponse = await request(app).post('/api/v1/auth/login').send({
-        email: registerResponse.body.data.email,
-        password: 'TestPass123!',
-      });
-
-      expect(loginResponse.status).toBe(200);
-      const validToken = loginResponse.body.data.token;
-
-      // Obtener perfil
       const response = await request(app)
         .get('/api/v1/auth/profile')
-        .set('Authorization', `Bearer ${validToken}`);
+        .set('Authorization', `Bearer ${token}`);
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
-      expect(response.body.data.email).toBe(registerResponse.body.data.email);
+      expect(response.body.data.email).toBe(email);
       expect(response.body.data.name).toBe('Profile Test User');
       expect(response.body.data.role.name).toBe('CLIENT');
       expect(response.body.data).toHaveProperty('id');
@@ -68,25 +77,8 @@ describe('Profile Integration Tests', () => {
   describe('PUT /api/v1/auth/profile', () => {
     // Debería actualizar el perfil del usuario exitosamente
     it('should update user profile successfully', async () => {
-      const registerResponse = await request(app)
-        .post('/api/v1/auth/register')
-        .send({
-          name: 'Update Test User',
-          email: `update-test-${Date.now()}@example.com`,
-          phone: '+1234567890',
-          password: 'TestPass123!',
-          roleName: 'CLIENT',
-        });
+      const { token, email } = await registerVerifiedAndLogin('Update Test User', 'update-test');
 
-      // Login
-      const loginResponse = await request(app).post('/api/v1/auth/login').send({
-        email: registerResponse.body.data.email,
-        password: 'TestPass123!',
-      });
-
-      const validToken = loginResponse.body.data.token;
-
-      // Actualizar perfil
       const updateData = {
         name: 'Updated Name',
         phone: '+9876543210',
@@ -94,39 +86,23 @@ describe('Profile Integration Tests', () => {
 
       const updateResponse = await request(app)
         .put('/api/v1/auth/profile')
-        .set('Authorization', `Bearer ${validToken}`)
+        .set('Authorization', `Bearer ${token}`)
         .send(updateData);
 
       expect(updateResponse.status).toBe(200);
       expect(updateResponse.body.success).toBe(true);
       expect(updateResponse.body.data.name).toBe('Updated Name');
       expect(updateResponse.body.data.phone).toBe('+9876543210');
-      expect(updateResponse.body.data.email).toBe(registerResponse.body.data.email);
+      expect(updateResponse.body.data.email).toBe(email);
     });
 
     // Debería obtener el perfil actualizado después de la actualización
     it('should get updated profile after update', async () => {
-      const registerResponse = await request(app)
-        .post('/api/v1/auth/register')
-        .send({
-          name: 'Get Updated Test User',
-          email: `get-updated-${Date.now()}@example.com`,
-          phone: '+1234567890',
-          password: 'TestPass123!',
-          roleName: 'CLIENT',
-        });
-
-      // Login
-      const loginResponse = await request(app).post('/api/v1/auth/login').send({
-        email: registerResponse.body.data.email,
-        password: 'TestPass123!',
-      });
-
-      const validToken = loginResponse.body.data.token;
+      const { token } = await registerVerifiedAndLogin('Get Updated Test User', 'get-updated');
 
       await request(app)
         .put('/api/v1/auth/profile')
-        .set('Authorization', `Bearer ${validToken}`)
+        .set('Authorization', `Bearer ${token}`)
         .send({
           name: 'Finally Updated Name',
           phone: '+9876543210',
@@ -134,7 +110,7 @@ describe('Profile Integration Tests', () => {
 
       const response = await request(app)
         .get('/api/v1/auth/profile')
-        .set('Authorization', `Bearer ${validToken}`);
+        .set('Authorization', `Bearer ${token}`);
 
       expect(response.status).toBe(200);
       expect(response.body.data.name).toBe('Finally Updated Name');
@@ -143,27 +119,11 @@ describe('Profile Integration Tests', () => {
 
     // Debería actualizar el perfil con datos parciales
     it('should update profile with partial data', async () => {
-      const registerResponse = await request(app)
-        .post('/api/v1/auth/register')
-        .send({
-          name: 'Partial Test User',
-          email: `partial-${Date.now()}@example.com`,
-          phone: '+1234567890',
-          password: 'TestPass123!',
-          roleName: 'CLIENT',
-        });
-
-      // Login
-      const loginResponse = await request(app).post('/api/v1/auth/login').send({
-        email: registerResponse.body.data.email,
-        password: 'TestPass123!',
-      });
-
-      const validToken = loginResponse.body.data.token;
+      const { token } = await registerVerifiedAndLogin('Partial Test User', 'partial');
 
       const response = await request(app)
         .put('/api/v1/auth/profile')
-        .set('Authorization', `Bearer ${validToken}`)
+        .set('Authorization', `Bearer ${token}`)
         .send({
           name: 'Partial Update Name',
         });
@@ -183,27 +143,11 @@ describe('Profile Integration Tests', () => {
 
     // Debería rechazar la actualización del perfil con datos inválidos
     it('should reject profile update with invalid data', async () => {
-      const registerResponse = await request(app)
-        .post('/api/v1/auth/register')
-        .send({
-          name: 'Invalid Test User',
-          email: `invalid-${Date.now()}@example.com`,
-          phone: '+1234567890',
-          password: 'TestPass123!',
-          roleName: 'CLIENT',
-        });
-
-      // Login
-      const loginResponse = await request(app).post('/api/v1/auth/login').send({
-        email: registerResponse.body.data.email,
-        password: 'TestPass123!',
-      });
-
-      const validToken = loginResponse.body.data.token;
+      const { token } = await registerVerifiedAndLogin('Invalid Test User', 'invalid');
 
       const response = await request(app)
         .put('/api/v1/auth/profile')
-        .set('Authorization', `Bearer ${validToken}`)
+        .set('Authorization', `Bearer ${token}`)
         .send({
           name: '',
           phone: 'invalid-phone',

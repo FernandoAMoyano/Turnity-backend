@@ -1,0 +1,95 @@
+name: CD
+
+# Se dispara cuando el workflow "CI" (ci.yml) termina en la rama main --
+# no en cada push, y no en PRs. Asi el build+push de la imagen y el
+# deploy solo pasan si el commit ya paso lint/build/tests en CI.
+on:
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    name: Build y publicar imagen en GHCR
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: Checkout del commit que paso el CI
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Login a GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Los nombres de imagen OCI/Docker tienen que ser todo minuscula --
+      # github.repository preserva mayusculas (FernandoAMoyano/Ty-backend),
+      # asi que se normaliza antes de armar el tag.
+      - name: Nombre de imagen en minuscula
+        id: image
+        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      # Build del stage "runtime" del Dockerfile (Fase 1) -- la misma
+      # imagen que se valido localmente con docker-compose.yml (Fase 3).
+      # Se taggea :latest (la que Render sigue) + :sha-<commit completo>
+      # (inmutable, para poder volver atras a un commit puntual).
+      - name: Build y push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          push: true
+          tags: |
+            ghcr.io/${{ steps.image.outputs.name }}:latest
+            ghcr.io/${{ steps.image.outputs.name }}:sha-${{ github.event.workflow_run.head_sha }}
+
+  deploy:
+    name: Deploy a Render
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    # El contexto "secrets" no esta permitido dentro de "if:" (solo en
+    # env/with/run) -- por eso se vuelcan a variables de entorno del job
+    # aqui, y los "if:" de abajo comparan contra "env.*" en vez de
+    # "secrets.*" directamente.
+    env:
+      RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+      RENDER_APP_URL: ${{ secrets.RENDER_APP_URL }}
+    steps:
+      # Condicionado a que el secret exista: la primera vez que corre este
+      # workflow (antes de crear el servicio en Render) todavia no hay
+      # Deploy Hook -- el build+push de arriba igual se completa, y este
+      # step se saltea en vez de fallar.
+      - name: Disparar el Deploy Hook de Render
+        if: ${{ env.RENDER_DEPLOY_HOOK_URL != '' }}
+        run: curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL"
+
+      # Espera hasta 5 minutos a que la nueva version quede realmente
+      # operativa (no solo "arrancada") -- pega a /ready, que consulta la
+      # base de verdad (Fase 2).
+      - name: Esperar a que /ready responda 200
+        if: ${{ env.RENDER_DEPLOY_HOOK_URL != '' && env.RENDER_APP_URL != '' }}
+        run: |
+          for i in $(seq 1 20); do
+            if curl -fsS "$RENDER_APP_URL/ready"; then
+              echo ""
+              echo "La app respondio /ready correctamente."
+              exit 0
+            fi
+            echo "Intento $i/20: todavia no responde, esperando 15s..."
+            sleep 15
+          done
+          echo "Se agoto el tiempo de espera sin que /ready respondiera 200."
+          exit 1
