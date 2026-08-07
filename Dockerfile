@@ -54,6 +54,15 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma/schema.prisma ./prisma/schema.prisma
 COPY --from=builder /app/prisma/migrations ./prisma/migrations
 
+# Script opcional (no es el CMD por defecto -- docker-compose.yml sigue
+# usando su propio servicio "migrate" separado). Lo usa Render como Docker
+# Command: ahi no existe el Pre-Deploy Command (feature paga), asi que la
+# migracion se corre en el mismo arranque del contenedor, antes de node.
+# Se resuelve como un script en vez de "sh -c \"a && b\"" en el campo de
+# Render porque ese campo no siempre respeta las comillas al tokenizar.
+COPY --from=builder /app/docker-entrypoint.sh ./docker-entrypoint.sh
+RUN chmod +x ./docker-entrypoint.sh
+
 # src/shared/logger/logger.ts crea/escribe en ./logs al importarse (siempre,
 # salvo NODE_ENV=test). El resto de /app (node_modules, dist, prisma) el
 # proceso solo lo LEE -- los permisos por defecto (root:root, 644/755) ya
