@@ -223,6 +223,9 @@ $RECYCLE.BIN/
 
 # Scripts de automatización - no incluir en repositorio
 *.sh
+# Excepcion: lo copia el Dockerfile (stage runtime) y lo necesita Render
+# para migrar antes de arrancar -- tiene que viajar en el repo.
+!docker-entrypoint.sh
 src/docs/INTERVENTION_PLAN.md
 src/docs/session-handoff-v*.md
 src/docs/SKILL.md
