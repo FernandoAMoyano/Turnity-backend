@@ -1,16 +1,16 @@
-![CI](https://github.com/FernandoAMoyano/Ty-backend/actions/workflows/ci.yml/badge.svg?branch=main)
+![CI](https://github.com/FernandoAMoyano/Turnity-backend/actions/workflows/ci.yml/badge.svg?branch=main)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 ![Node.js](https://img.shields.io/badge/Node.js-18%2B-339933.svg?logo=nodedotjs&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6.svg?logo=typescript&logoColor=white)
 ![Express](https://img.shields.io/badge/Express-5.x-000000.svg?logo=express&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14%2B-4169E1.svg?logo=postgresql&logoColor=white)
-![Tests](https://img.shields.io/badge/Tests-1337%20passing-brightgreen.svg)
+![Tests](https://img.shields.io/badge/Tests-1398%20passing-brightgreen.svg)
 
 # 💇‍♀️ Turnity Backend
 
 Backend API para sistema de gestión de salones de belleza construido con **Node.js**, **TypeScript**, **Express** y **Prisma ORM**.
 
-Implementa **Clean Architecture**, **DDD táctico** y **Arquitectura Hexagonal** (Ports & Adapters) con 7 módulos de negocio, 1337 tests automatizados y documentación Swagger interactiva.
+Implementa **Clean Architecture**, **DDD táctico** y **Arquitectura Hexagonal** (Ports & Adapters) con 7 módulos de negocio, 1398 tests automatizados y documentación Swagger interactiva.
 
 ---
 
@@ -24,9 +24,10 @@ Implementa **Clean Architecture**, **DDD táctico** y **Arquitectura Hexagonal**
 6. [Testing](#testing)
 7. [Base de Datos](#base-de-datos)
 8. [Desarrollo Local](#desarrollo-local)
-9. [Tecnologías](#tecnologías)
-10. [Contribuir](#contribuir)
-11. [Licencia](#licencia)
+9. [Despliegue](#despliegue)
+10. [Tecnologías](#tecnologías)
+11. [Contribuir](#contribuir)
+12. [Licencia](#licencia)
 
 ---
 
@@ -42,7 +43,7 @@ Implementa **Clean Architecture**, **DDD táctico** y **Arquitectura Hexagonal**
 ### 1. Clonar el repositorio
 
 ```bash
-git clone https://github.com/FernandoAMoyano/Ty-backend.git
+git clone https://github.com/FernandoAMoyano/Turnity-backend.git
 cd Turnity-backend
 ```
 
@@ -268,10 +269,23 @@ Base URL: `http://localhost:3000/api/v1`
 
 ### Authentication
 
+> El refresh token viaja en una cookie `httpOnly` (no en el body de la
+> respuesta). Las rutas que lo consumen (`refresh-token`, `logout`,
+> `logout-all`) requieren ademas un header `X-CSRF-Token`, cuyo valor se
+> obtiene de `GET /auth/csrf` o de la respuesta de `login`. Detalle completo
+> en `src/docs/postman/auth_postman_collection.json`.
+
 ```
-POST   /auth/register              # Registrar usuario
-POST   /auth/login                 # Iniciar sesión
-POST   /auth/refresh-token         # Renovar token
+POST   /auth/register              # Registrar usuario (envia email de verificacion)
+POST   /auth/verify-email          # Verificar email con el token del enlace
+POST   /auth/resend-verification   # Reenviar email de verificacion
+POST   /auth/login                 # Iniciar sesion (setea cookies refreshToken + csrfToken)
+POST   /auth/refresh-token         # Rotar sesion (cookie + CSRF)
+POST   /auth/logout                # Cerrar la sesion actual (cookie + CSRF)
+POST   /auth/logout-all            # Cerrar todas las sesiones del usuario (cookie + CSRF)
+GET    /auth/csrf                  # Obtener el token CSRF
+POST   /auth/forgot-password       # Solicitar reset de contraseña por email
+POST   /auth/reset-password        # Aplicar la nueva contraseña (revoca todas las sesiones)
 GET    /auth/profile               # Obtener perfil (autenticado)
 PUT    /auth/profile               # Actualizar perfil (autenticado)
 PUT    /auth/change-password       # Cambiar contraseña (autenticado)
@@ -390,7 +404,7 @@ PATCH  /notifications/:id/read                 # Marcar una como leída (autenti
 
 [Índice](#índice)
 
-El proyecto cuenta con **1337 tests** organizados en tres niveles:
+El proyecto cuenta con **1398 tests** organizados en tres niveles:
 
 ### Estructura de tests
 
@@ -518,6 +532,81 @@ La API estará disponible en **http://localhost:3000** con la documentación Swa
 
 ---
 
+## Despliegue
+
+[Índice](#índice)
+
+La API corre en producción como imagen Docker en **Render** (free tier), con **Neon**
+como Postgres serverless. El flujo es completamente automatico: un push a `main`
+dispara CI, y si pasa en verde, `cd.yml` construye la imagen, la publica en GHCR y
+dispara el deploy en Render.
+
+### Arquitectura del deploy
+
+```
+main (push) --> CI (lint, build, test, docker build sanity) --> CD
+  CD: build stage "runtime" del Dockerfile --> push a ghcr.io (:latest + :sha-<commit>)
+      --> POST al Deploy Hook de Render --> Render baja la imagen y la arranca
+      --> smoke check: espera a que GET /ready responda 200
+```
+
+### Variables de entorno (Render, seccion Environment)
+
+Ninguna es nueva respecto de `.env.example`; ver `.env.production.example` para el
+listado completo con comentarios. Las mas relevantes:
+
+```bash
+NODE_ENV=production
+DATABASE_URL=<connection string pooled de Neon>
+DIRECT_URL=<connection string directa de Neon, sin pooler -- la usan las migraciones>
+JWT_ACCESS_SECRET / JWT_REFRESH_SECRET
+COOKIE_SECURE=true
+COOKIE_SAMESITE=lax
+MAIL_HOST / MAIL_PORT / MAIL_USER / MAIL_PASSWORD / MAIL_FROM
+REQUIRE_EMAIL_VERIFICATION=true
+EXPOSE_VERIFICATION_TOKENS=false   # nunca true -- env.ts aborta el boot si se activa
+```
+
+`DATABASE_URL` es la conexion _pooled_ de Neon (la usa la app en runtime);
+`DIRECT_URL` es la conexion directa, sin pooler (la necesitan las migraciones --
+`prisma migrate deploy` no funciona de forma confiable a traves de PgBouncer).
+
+### Migraciones
+
+El plan Free de Render no incluye Pre-Deploy Command (es una feature paga), asi
+que las migraciones se aplican en el propio arranque del contenedor, via
+`docker-entrypoint.sh` (raiz del repo): corre `npx prisma migrate deploy` y recien
+despues levanta el servidor. Es idempotente -- si no hay migraciones pendientes,
+no hace nada -- asi que es seguro que corra en cada arranque, incluyendo cuando
+Render "despierta" el servicio tras dormirse por inactividad.
+
+### Rollback
+
+Dos formas, sin volver a tocar codigo:
+
+1. Desde el dashboard de Render: Deploys -> elegir un deploy anterior -> Rollback.
+2. Re-apuntar el servicio a un tag inmutable anterior en GHCR
+   (`ghcr.io/fernandoamoyano/turnity-backend:sha-<commit-anterior>`) y disparar el
+   Deploy Hook de nuevo.
+
+Las migraciones del proyecto son aditivas por convencion, asi que un rollback de
+codigo no suele requerir revertir la base de datos.
+
+### Verificar el deploy
+
+```bash
+bash scripts/smoke-health.sh
+# o contra otra URL:
+BASE_URL=https://tu-servicio.onrender.com bash scripts/smoke-health.sh
+```
+
+> **Cold start**: el free tier de Render duerme el servicio tras ~15 min sin
+> trafico, y el Postgres de Neon tiene su propio cold start tras inactividad. El
+> primer request tras un periodo sin uso puede tardar unos segundos de mas --
+> es esperado, no un error.
+
+---
+
 ## Tecnologías
 
 [Índice](#índice)
@@ -534,7 +623,7 @@ La API estará disponible en **http://localhost:3000** con la documentación Swa
 | **Containerización** | Docker · Docker Compose                                                              |
 | **Seguridad**        | Helmet · CORS · Rate limiting (express-rate-limit)                                   |
 | **Logging**          | winston · morgan · RequestId middleware (header `X-Request-Id`, correlación de logs) |
-| **Utilidades**       | date-fns · uuid · nodemailer (instalado, sin implementar)                            |
+| **Utilidades**       | date-fns · uuid · nodemailer (verificación de email y reset de contraseña)           |
 | **Arquitectura**     | Clean Architecture · DDD táctico · Hexagonal                                         |
 
 ---
