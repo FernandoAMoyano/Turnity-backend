@@ -226,6 +226,9 @@ $RECYCLE.BIN/
 # Excepcion: lo copia el Dockerfile (stage runtime) y lo necesita Render
 # para migrar antes de arrancar -- tiene que viajar en el repo.
 !docker-entrypoint.sh
+# Excepcion: smoke test para verificar el deploy (Fase 5) -- se documenta
+# en el Readme, tiene que estar disponible en el repo.
+!scripts/smoke-health.sh
 src/docs/INTERVENTION_PLAN.md
 src/docs/session-handoff-v*.md
 src/docs/SKILL.md
