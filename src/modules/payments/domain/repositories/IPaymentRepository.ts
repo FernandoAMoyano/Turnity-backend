@@ -1,4 +1,4 @@
-import { Payment, PaymentStatusEnum } from '../entities/Payment';
+import { Payment, PaymentProviderEnum, PaymentStatusEnum } from '../entities/Payment';
 
 /**
  * Interface para filtros de búsqueda de pagos
@@ -8,6 +8,7 @@ export interface PaymentFilters {
   appointmentId?: string;
   startDate?: Date;
   endDate?: Date;
+  provider?: PaymentProviderEnum;
 }
 
 /**
