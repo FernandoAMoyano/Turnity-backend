@@ -165,7 +165,7 @@ describe('PaymentGatewayEvent Entity', () => {
       expect(event.processedAt).toBeInstanceOf(Date);
     });
 
-    // No debería lanzar al marcar dos veces: el manejador del webhook no puede
+    // No debería lanzar una excepción al marcar dos veces: el manejador del webhook no puede
     // permitirse una excepción, porque devolvería 5xx y generaría más reintentos
     it('should not throw when a terminal transition is applied twice', () => {
       const event = new PaymentGatewayEvent(validEventProps);

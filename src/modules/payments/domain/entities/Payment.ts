@@ -386,7 +386,7 @@ export class Payment {
   /**
    * Aplica el estado informado por la pasarela de forma idempotente
    * @description Es la contraparte de markAsCompleted/markAsFailed/refund para
-   * el camino automático: nunca lanza, porque la pasarela reintenta por diseño
+   * el camino automático: nunca lanza una excepción, porque la pasarela reintenta por diseño
    * y un reintento sobre un pago ya resuelto no es un error. Los datos de
    * auditoría (estado crudo y lastSyncedAt) se refrescan siempre, incluso
    * cuando la transición no se aplica, para dejar registro de que se consultó.

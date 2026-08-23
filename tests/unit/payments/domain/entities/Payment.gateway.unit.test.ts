@@ -335,7 +335,7 @@ describe('Payment Entity - Integración con pasarela', () => {
       expect(payment.lastSyncedAt).toBeInstanceOf(Date);
     });
 
-    // No debería lanzar nunca, sea cual sea la combinación de estados
+    // No debería lanzar una excepción nunca, sea cual sea la combinación de estados
     it('should never throw for any status combination', () => {
       const statuses = Object.values(PaymentStatusEnum);
 
