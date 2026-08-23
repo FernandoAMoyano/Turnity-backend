@@ -12,7 +12,7 @@ dotenv.config();
  * para verificacion de email + reset de password. Son requeridas en produccion
  * y opcionales en development/test (donde el transporte es mock/log y no se
  * exige SMTP a la suite/CI).
- *
+
  * Excluidas: DB_HOST/DB_PORT/DB_USERNAME/DB_PASSWORD/
  * DB_DATABASE (Prisma solo lee DATABASE_URL, las otras 5 solo las usa
  * docker-compose.dev.yml para configurar el contenedor de Postgres) y
@@ -28,6 +28,18 @@ const envSchema = z
 
     DATABASE_URL: z.url({
       message: 'DATABASE_URL debe ser una URL valida (ej. postgresql://user:pass@host:port/db)',
+    }),
+
+    // DIRECT_URL: usada por el motor de migraciones de Prisma (migrate/db
+    // push), no por el cliente en runtime -- ver comentario en
+    // schema.prisma. Gap preexistente cerrado en F2: antes no se validaba en
+    // absoluto, pese a que docker-entrypoint.sh corre `migrate deploy` contra
+    // ella en cada arranque del contenedor. Obligatoria como DATABASE_URL: en
+    // todo ambiente real (dev, CI, Render) ya se define explicita (ver
+    // .env.example / .env.production.example / ci.yml).
+    DIRECT_URL: z.url({
+      message:
+        'DIRECT_URL debe ser una URL valida (ej. postgresql://user:pass@host:port/db) -- la usa prisma migrate/db push, ver comentario en schema.prisma',
     }),
 
     JWT_ACCESS_SECRET: z.string().min(32, 'JWT_ACCESS_SECRET debe tener al menos 32 caracteres'),
@@ -94,6 +106,34 @@ const envSchema = z
     EXPOSE_VERIFICATION_TOKENS: z
       .preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('false'))
       .transform((v) => v === 'true'),
+
+    // Pasarela de pago (Mercado Pago) -- F2. 'none' mantiene el proyecto
+    // arrancable sin credenciales (dev, CI, cualquiera que clone el repo):
+    // NoopPaymentGateway rechaza checkout/refund con 422 y el webhook
+    // responde 401 siempre. El superRefine de abajo exige credenciales cuando
+    // se activa 'mercadopago'.
+    PAYMENT_GATEWAY_PROVIDER: z.enum(['none', 'mercadopago']).default('none'),
+    // Access token de la cuenta de Mercado Pago. Empieza con TEST- en
+    // sandbox, APP_USR- en produccion (ver isSandbox en MercadoPagoGateway).
+    MERCADOPAGO_ACCESS_TOKEN: z.preprocess(
+      (v) => (v === '' ? undefined : v),
+      z.string().min(20).optional(),
+    ),
+    // Secreto para verificar la firma x-signature de los webhooks (panel de MP).
+    MERCADOPAGO_WEBHOOK_SECRET: z.preprocess(
+      (v) => (v === '' ? undefined : v),
+      z.string().min(16).optional(),
+    ),
+    // Moneda de los cobros, ISO 4217 (ej. ARS, BRL, MXN).
+    PAYMENT_CURRENCY: z.string().length(3).default('ARS'),
+    // URL publica de esta API, usada para armar notification_url/back_urls de
+    // la preferencia de pago. Obligatoria si PAYMENT_GATEWAY_PROVIDER=mercadopago.
+    PUBLIC_API_URL: z.preprocess((v) => (v === '' ? undefined : v), z.url().optional()),
+    // Ventana de tolerancia (segundos) para el 'ts' de la firma del webhook --
+    // mitiga el replay de una notificacion valida capturada.
+    PAYMENT_WEBHOOK_SIGNATURE_TOLERANCE_SECONDS: z.coerce.number().int().min(30).default(300),
+    // Timeout (ms) de las llamadas HTTP al gateway.
+    PAYMENT_GATEWAY_TIMEOUT_MS: z.coerce.number().int().min(1000).default(10000),
   })
   .superRefine((val, ctx) => {
     // MAIL_* obligatorias en produccion: sin ellas el EmailService no puede enviar.
@@ -116,6 +156,49 @@ const envSchema = z
           message: 'EXPOSE_VERIFICATION_TOKENS no puede ser true en produccion',
         });
       }
+    }
+
+    // Pasarela de pago: credenciales obligatorias solo si esta activa (§7.2 del plan).
+    if (val.PAYMENT_GATEWAY_PROVIDER === 'mercadopago') {
+      const requeridas = [
+        'MERCADOPAGO_ACCESS_TOKEN',
+        'MERCADOPAGO_WEBHOOK_SECRET',
+        'PUBLIC_API_URL',
+      ] as const;
+      for (const key of requeridas) {
+        if (!val[key]) {
+          ctx.addIssue({
+            code: 'custom',
+            path: [key],
+            message: `${key} es obligatoria cuando PAYMENT_GATEWAY_PROVIDER=mercadopago`,
+          });
+        }
+      }
+
+      // Nunca cobrar de verdad con credenciales de sandbox (mismo criterio
+      // que la guarda de EXPOSE_VERIFICATION_TOKENS de arriba).
+      if (val.NODE_ENV === 'production' && val.MERCADOPAGO_ACCESS_TOKEN?.startsWith('TEST-')) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['MERCADOPAGO_ACCESS_TOKEN'],
+          message: 'MERCADOPAGO_ACCESS_TOKEN no puede empezar con TEST- en produccion',
+        });
+      }
+    }
+
+    // PUBLIC_API_URL debe ser https en produccion, si esta seteada (la
+    // obligatoriedad de que exista, cuando corresponde, ya la exige el bloque
+    // de arriba -- este chequeo es solo sobre el esquema).
+    if (
+      val.NODE_ENV === 'production' &&
+      val.PUBLIC_API_URL &&
+      !val.PUBLIC_API_URL.startsWith('https://')
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['PUBLIC_API_URL'],
+        message: 'PUBLIC_API_URL debe ser https:// en produccion',
+      });
     }
   });
 

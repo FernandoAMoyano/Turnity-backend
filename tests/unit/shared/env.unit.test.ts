@@ -5,6 +5,9 @@ describe('validateEnv', () => {
     JWT_ACCESS_SECRET: 'a'.repeat(32),
     JWT_REFRESH_SECRET: 'b'.repeat(32),
     DATABASE_URL: 'postgresql://user:pass@localhost:5432/turnity?schema=public',
+    // Obligatoria desde F2 (cierre del gap §0.5): en todo ambiente real ya se
+    // define explicita junto a DATABASE_URL (.env.example, ci.yml).
+    DIRECT_URL: 'postgresql://user:pass@localhost:5432/turnity?schema=public',
   };
 
   let exitSpy: jest.SpyInstance;
@@ -29,6 +32,7 @@ describe('validateEnv', () => {
       expect(exitSpy).not.toHaveBeenCalled();
       expect(result.JWT_ACCESS_SECRET).toBe(validEnv.JWT_ACCESS_SECRET);
       expect(result.DATABASE_URL).toBe(validEnv.DATABASE_URL);
+      expect(result.DIRECT_URL).toBe(validEnv.DIRECT_URL);
     });
 
     // Debería aplicar los defaults de las variables opcionales
@@ -64,6 +68,18 @@ describe('validateEnv', () => {
       expect(result.LOG_LEVEL).toBe('debug');
       expect(result.JWT_ACCESS_EXPIRY).toBe('1h');
       expect(result.FRONTEND_URL).toBe('https://turnity.com');
+    });
+
+    // Debería aplicar los defaults de la pasarela de pago (desactivada, sin credenciales)
+    it('should apply the payment gateway defaults (disabled, no credentials)', () => {
+      const result = validateEnv(validEnv);
+
+      expect(result.PAYMENT_GATEWAY_PROVIDER).toBe('none');
+      expect(result.PAYMENT_CURRENCY).toBe('ARS');
+      expect(result.PAYMENT_WEBHOOK_SIGNATURE_TOLERANCE_SECONDS).toBe(300);
+      expect(result.PAYMENT_GATEWAY_TIMEOUT_MS).toBe(10000);
+      expect(result.MERCADOPAGO_ACCESS_TOKEN).toBeUndefined();
+      expect(result.MERCADOPAGO_WEBHOOK_SECRET).toBeUndefined();
     });
   });
 
@@ -126,6 +142,23 @@ describe('validateEnv', () => {
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
+    // Debería llamar a process.exit(1) si falta DIRECT_URL (gap §0.5 del plan de pasarela)
+    it('should call process.exit(1) if DIRECT_URL is missing', () => {
+      const { DIRECT_URL, ...rest } = validEnv;
+      void DIRECT_URL;
+
+      validateEnv(rest);
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    // Debería llamar a process.exit(1) si DIRECT_URL no es una URL válida
+    it('should call process.exit(1) if DIRECT_URL is not a valid URL', () => {
+      validateEnv({ ...validEnv, DIRECT_URL: 'no-es-una-url' });
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
     // Debería llamar a process.exit(1) si NODE_ENV tiene un valor fuera del enum
     it('should call process.exit(1) if NODE_ENV has a value outside the enum', () => {
       validateEnv({ ...validEnv, NODE_ENV: 'staging' });
@@ -155,6 +188,94 @@ describe('validateEnv', () => {
       expect(printedMessages).toContain('JWT_ACCESS_SECRET');
       expect(printedMessages).toContain('JWT_REFRESH_SECRET');
       expect(printedMessages).toContain('DATABASE_URL');
+    });
+  });
+
+  // pasarela de pago (Mercado Pago) -- F2
+  describe('payment gateway (Mercado Pago)', () => {
+    // Debería pasar con PAYMENT_GATEWAY_PROVIDER=none y sin ninguna credencial:
+    // es lo que mantiene el repo clonable y arrancable sin cuenta de MP
+    it('should pass with PAYMENT_GATEWAY_PROVIDER=none and no credentials at all', () => {
+      const result = validateEnv({ ...validEnv, PAYMENT_GATEWAY_PROVIDER: 'none' });
+
+      expect(exitSpy).not.toHaveBeenCalled();
+      expect(result.PAYMENT_GATEWAY_PROVIDER).toBe('none');
+    });
+
+    // Debería llamar a process.exit(1) si PAYMENT_GATEWAY_PROVIDER=mercadopago sin ninguna credencial
+    it('should call process.exit(1) if PAYMENT_GATEWAY_PROVIDER=mercadopago with no credentials', () => {
+      validateEnv({ ...validEnv, PAYMENT_GATEWAY_PROVIDER: 'mercadopago' });
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    // Debería pasar con PAYMENT_GATEWAY_PROVIDER=mercadopago y las tres credenciales presentes
+    it('should pass with PAYMENT_GATEWAY_PROVIDER=mercadopago and all three credentials present', () => {
+      const result = validateEnv({
+        ...validEnv,
+        PAYMENT_GATEWAY_PROVIDER: 'mercadopago',
+        MERCADOPAGO_ACCESS_TOKEN: 'TEST-1234567890abcdefgh',
+        MERCADOPAGO_WEBHOOK_SECRET: 'a-secret-of-16-chars-or-more',
+        PUBLIC_API_URL: 'http://localhost:3000',
+      });
+
+      expect(exitSpy).not.toHaveBeenCalled();
+      expect(result.PAYMENT_GATEWAY_PROVIDER).toBe('mercadopago');
+    });
+
+    // Debería llamar a process.exit(1) en produccion si el access token empieza con TEST-
+    it('should call process.exit(1) in production if the access token starts with TEST-', () => {
+      validateEnv({
+        ...validEnv,
+        NODE_ENV: 'production',
+        MAIL_HOST: 'smtp.turnity.com',
+        MAIL_USER: 'noreply@turnity.com',
+        MAIL_PASSWORD: 'secret',
+        MAIL_FROM: 'noreply@turnity.com',
+        PAYMENT_GATEWAY_PROVIDER: 'mercadopago',
+        MERCADOPAGO_ACCESS_TOKEN: 'TEST-1234567890abcdefgh',
+        MERCADOPAGO_WEBHOOK_SECRET: 'a-secret-of-16-chars-or-more',
+        PUBLIC_API_URL: 'https://turnity-api.onrender.com',
+      });
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    // Debería llamar a process.exit(1) en produccion si PUBLIC_API_URL no es https
+    it('should call process.exit(1) in production if PUBLIC_API_URL is not https', () => {
+      validateEnv({
+        ...validEnv,
+        NODE_ENV: 'production',
+        MAIL_HOST: 'smtp.turnity.com',
+        MAIL_USER: 'noreply@turnity.com',
+        MAIL_PASSWORD: 'secret',
+        MAIL_FROM: 'noreply@turnity.com',
+        PAYMENT_GATEWAY_PROVIDER: 'mercadopago',
+        MERCADOPAGO_ACCESS_TOKEN: 'APP_USR-1234567890abcdefgh',
+        MERCADOPAGO_WEBHOOK_SECRET: 'a-secret-of-16-chars-or-more',
+        PUBLIC_API_URL: 'http://turnity-api.onrender.com',
+      });
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    // Debería pasar en produccion con un access token APP_USR- y PUBLIC_API_URL https
+    it('should pass in production with an APP_USR- access token and https PUBLIC_API_URL', () => {
+      const result = validateEnv({
+        ...validEnv,
+        NODE_ENV: 'production',
+        MAIL_HOST: 'smtp.turnity.com',
+        MAIL_USER: 'noreply@turnity.com',
+        MAIL_PASSWORD: 'secret',
+        MAIL_FROM: 'noreply@turnity.com',
+        PAYMENT_GATEWAY_PROVIDER: 'mercadopago',
+        MERCADOPAGO_ACCESS_TOKEN: 'APP_USR-1234567890abcdefgh',
+        MERCADOPAGO_WEBHOOK_SECRET: 'a-secret-of-16-chars-or-more',
+        PUBLIC_API_URL: 'https://turnity-api.onrender.com',
+      });
+
+      expect(exitSpy).not.toHaveBeenCalled();
+      expect(result.PAYMENT_GATEWAY_PROVIDER).toBe('mercadopago');
     });
   });
 });
