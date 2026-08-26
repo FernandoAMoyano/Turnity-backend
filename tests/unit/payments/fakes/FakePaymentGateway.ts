@@ -13,7 +13,8 @@ import {
  * @description Primer doble compartido del repo: los `Fake*` existentes (ej.
  * `FakeVerificationTokenRepository`) se definen inline en el archivo de test
  * que los usa porque tienen un solo consumidor. Este se extrae a un archivo
- * propio lo usan (`CreateCheckout`, `HandleGatewayWebhook`, `RefundPayment`, etc.)
+ * propio porque más de un caso de uso lo usa (`CreateCheckout`,
+ * `HandleGatewayWebhook`, `RefundPayment`, etc.)
  *
  * Cada método registra sus llamadas (`*Calls`) para asserts de invocación, y
  * el resultado/error que devuelve es configurable por test seteando las
