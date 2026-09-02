@@ -28,6 +28,8 @@ export class PaymentRoutes {
    *   stylist dueño de la cita, client dueño de la cita -- F18)
    * - GET /payments/:id - Obtener pago por ID (admin, stylist dueño -- F18)
    * - POST /payments - Crear pago (admin, stylist)
+   * - POST /payments/checkout - Abrir checkout contra la pasarela (admin, stylist dueño,
+   *   client dueño -- amplía F18 solo para esta ruta)
    * - POST /payments/:id/process - Procesar pago (admin, stylist dueño -- F18)
    * - POST /payments/:id/refund - Reembolsar pago (admin)
    * - POST /payments/:id/cancel - Cancelar pago (admin, stylist dueño -- F18)
@@ -65,6 +67,22 @@ export class PaymentRoutes {
     // ==========================================
     // RUTAS ESPECÍFICAS (sin parámetros dinámicos)
     // ==========================================
+
+    // POST /checkout - Abrir checkout contra la pasarela de pago (admin,
+    // stylist dueño, client dueño -- D1 del plan de la pasarela de pago,
+    // amplía F18 solo para esta ruta). Antes de /:id: sin este orden,
+    // Express la capturaría como /:id con id="checkout" y fallaría la
+    // validación de UUID (misma convención ya documentada en este archivo).
+    this.router.post(
+      '/checkout',
+      this.authMiddleware.authenticate.bind(this.authMiddleware),
+      this.authMiddleware.authorize(['ADMIN', 'STYLIST', 'CLIENT']),
+      PaymentValidations.createCheckout,
+      ValidationMiddleware.handleValidationErrors,
+      (req: Request, res: Response, next: NextFunction) => {
+        this.paymentController.createCheckout(req, res).catch(next);
+      },
+    );
 
     // GET /statistics - Estadísticas de pagos (admin only)
     this.router.get(

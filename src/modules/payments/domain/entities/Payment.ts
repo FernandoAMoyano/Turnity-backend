@@ -346,12 +346,16 @@ export class Payment {
 
   /**
    * Marca el pago como fallido
+   * @param reason - Motivo del fallo (opcional). Lo usa `CreateCheckout`
+   * cuando la pasarela rechaza la creación de la preferencia; `CancelPayment`
+   * sigue sin pasarlo, así que el pago manual queda exactamente igual que antes.
    */
-  markAsFailed(): void {
+  markAsFailed(reason?: string): void {
     if (this._status !== PaymentStatusEnum.PENDING) {
       throw new Error('Only pending payments can be marked as failed');
     }
     this._status = PaymentStatusEnum.FAILED;
+    if (reason) this._failureReason = reason;
     this._updatedAt = new Date();
   }
 
@@ -430,6 +434,22 @@ export class Payment {
     }
 
     return 'applied';
+  }
+
+  /**
+   * Registra la intención de cobro creada en la pasarela
+   * @description Se llama después de `gateway.createCheckout()`, una vez que
+   * el pago ya fue persistido en PENDING por `createForGateway` (necesario
+   * para que el id local viaje como referencia externa hacia la pasarela).
+   * Separa esa creación del pago de la escritura de las referencias que la
+   * pasarela devuelve recién en este segundo paso.
+   * @param checkoutUrl - URL de checkout hospedado a la que se redirige al pagador
+   * @param gatewayPreferenceId - Identificador de la preferencia en la pasarela
+   */
+  recordCheckoutCreated(checkoutUrl: string, gatewayPreferenceId: string): void {
+    this._checkoutUrl = checkoutUrl;
+    this._gatewayPreferenceId = gatewayPreferenceId;
+    this._updatedAt = new Date();
   }
 
   /**

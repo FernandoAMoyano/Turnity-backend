@@ -158,6 +158,112 @@ describe('Payment Entity - Integración con pasarela', () => {
     });
   });
 
+  describe('recordCheckoutCreated', () => {
+    // Debería setear checkoutUrl y gatewayPreferenceId sobre un pago recién
+    // creado con createForGateway, que nace sin ninguna referencia remota
+    it('should set checkoutUrl and gatewayPreferenceId on a freshly created gateway payment', () => {
+      const payment = Payment.createForGateway(
+        paymentId,
+        1500.5,
+        appointmentId,
+        PaymentProviderEnum.MERCADO_PAGO,
+        idempotencyKey,
+      );
+
+      payment.recordCheckoutCreated(
+        'https://sandbox.mercadopago.com/checkout/fake',
+        'fake-preference-id',
+      );
+
+      expect(payment.checkoutUrl).toBe('https://sandbox.mercadopago.com/checkout/fake');
+      expect(payment.gatewayPreferenceId).toBe('fake-preference-id');
+    });
+
+    // No debería tocar el status ni ningún otro campo de la pasarela: es un
+    // registro de referencias, no una transición de estado
+    it('should not change status or other gateway fields', () => {
+      const payment = Payment.createForGateway(
+        paymentId,
+        1500.5,
+        appointmentId,
+        PaymentProviderEnum.MERCADO_PAGO,
+        idempotencyKey,
+      );
+
+      payment.recordCheckoutCreated('https://example.com/checkout', 'pref-1');
+
+      expect(payment.status).toBe(PaymentStatusEnum.PENDING);
+      expect(payment.gatewayPaymentId).toBeUndefined();
+      expect(payment.gatewayStatus).toBeUndefined();
+    });
+
+    // Debería actualizar updatedAt
+    it('should bump updatedAt', () => {
+      const payment = Payment.createForGateway(
+        paymentId,
+        1500.5,
+        appointmentId,
+        PaymentProviderEnum.MERCADO_PAGO,
+        idempotencyKey,
+      );
+      const before = payment.updatedAt;
+
+      payment.recordCheckoutCreated('https://example.com/checkout', 'pref-1');
+
+      expect(payment.updatedAt.getTime()).toBeGreaterThanOrEqual(before.getTime());
+    });
+  });
+
+  describe('markAsFailed con motivo (fallo al crear el checkout)', () => {
+    // CreateCheckout marca FAILED con failureReason cuando la pasarela
+    // rechaza la creación de la preferencia -- distinto del camino manual
+    // (CancelPayment), que sigue llamando markAsFailed() sin argumentos
+    it('should record the failure reason when provided', () => {
+      const payment = Payment.createForGateway(
+        paymentId,
+        1500.5,
+        appointmentId,
+        PaymentProviderEnum.MERCADO_PAGO,
+        idempotencyKey,
+      );
+
+      payment.markAsFailed('Gateway rejected preference creation: invalid access token');
+
+      expect(payment.status).toBe(PaymentStatusEnum.FAILED);
+      expect(payment.failureReason).toBe(
+        'Gateway rejected preference creation: invalid access token',
+      );
+    });
+
+    // Sin motivo, se comporta exactamente igual que antes (CancelPayment)
+    it('should leave failureReason undefined when no reason is given', () => {
+      const payment = Payment.createForGateway(
+        paymentId,
+        1500.5,
+        appointmentId,
+        PaymentProviderEnum.MERCADO_PAGO,
+        idempotencyKey,
+      );
+
+      payment.markAsFailed();
+
+      expect(payment.status).toBe(PaymentStatusEnum.FAILED);
+      expect(payment.failureReason).toBeUndefined();
+    });
+
+    // Debería seguir respetando la guarda de estado: solo PENDING puede fallar
+    it('should still throw when the payment is not PENDING', () => {
+      const payment = new Payment({
+        ...gatewayPaymentProps,
+        status: PaymentStatusEnum.COMPLETED,
+      });
+
+      expect(() => payment.markAsFailed('some reason')).toThrow(
+        'Only pending payments can be marked as failed',
+      );
+    });
+  });
+
   describe('applyGatewayStatus - transiciones aplicadas', () => {
     // Debería completar un pago pendiente y dejarlo como cobro online
     it('should complete a pending payment and set ONLINE method', () => {

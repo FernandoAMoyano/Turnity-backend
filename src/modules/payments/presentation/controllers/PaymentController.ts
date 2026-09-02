@@ -1,5 +1,6 @@
 import { Response } from 'express';
 import { CreatePayment } from '../../application/use-cases/CreatePayment';
+import { CreateCheckout } from '../../application/use-cases/CreateCheckout';
 import { GetPaymentById } from '../../application/use-cases/GetPaymentById';
 import { GetPaymentsByAppointment } from '../../application/use-cases/GetPaymentsByAppointment';
 import { GetPayments } from '../../application/use-cases/GetPayments';
@@ -20,6 +21,7 @@ import { UnauthorizedError } from '../../../../shared/exceptions/UnauthorizedErr
 export class PaymentController {
   constructor(
     private _createPayment: CreatePayment,
+    private _createCheckout: CreateCheckout,
     private _getPaymentById: GetPaymentById,
     private _getPaymentsByAppointment: GetPaymentsByAppointment,
     private _getPayments: GetPayments,
@@ -59,6 +61,52 @@ export class PaymentController {
       success: true,
       data: payment,
       message: 'Payment created successfully',
+    });
+  }
+
+  /**
+   * Abre un checkout contra la pasarela de pago (ADMIN, STYLIST dueño,
+   * CLIENT dueño de la cita)
+   * @route POST /payments/checkout
+   * @param req - Request autenticado con `appointmentId`/`amount`/
+   * `description?` en el body y `Idempotency-Key` opcional en headers
+   * @param res - Response de Express
+   * @returns Promise con el checkout creado (o el ya existente, ante un
+   * reintento con la misma `Idempotency-Key`)
+   * @responseStatus 201 - Checkout creado
+   * @responseStatus 200 - `Idempotency-Key` ya usada: se devuelve el checkout existente
+   * @throws NotFoundError si la cita no existe
+   * @throws ForbiddenError si el usuario no tiene permisos sobre la cita
+   * @throws BusinessRuleError si la cita no está en un estado válido para pagar,
+   * o si la pasarela no está configurada
+   * @throws ConflictError si ya hay un checkout pendiente para la cita (D5)
+   */
+  async createCheckout(req: AuthenticatedRequest, res: Response): Promise<Response> {
+    if (!req.user?.userId || !req.user?.roleName) {
+      throw new UnauthorizedError('Authentication required');
+    }
+
+    const { appointmentId, amount, description } = req.body;
+    // express-validator normaliza el nombre de header a minúsculas
+    const idempotencyKey = req.header('idempotency-key') || undefined;
+
+    const { dto: checkout, created } = await this._createCheckout.execute(
+      {
+        appointmentId,
+        amount,
+        description,
+        idempotencyKey,
+      },
+      req.user.userId,
+      req.user.roleName,
+    );
+
+    return res.status(created ? 201 : 200).json({
+      success: true,
+      data: checkout,
+      message: created
+        ? 'Checkout created successfully'
+        : 'Checkout already existed for this idempotency key',
     });
   }
 

@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 
 // Repository
 import { IPaymentRepository } from './domain/repositories/IPaymentRepository';
+import { IGatewayAwarePaymentRepository } from './domain/repositories/IPaymentGatewayLookup';
 import { PrismaPaymentRepository } from './infrastructure/persistence/PrismaPaymentRepository';
 
 // Repositorios de módulos externos
@@ -10,8 +11,13 @@ import { IAppointmentStatusRepository } from '../appointments/domain/repositorie
 import { PrismaAppointmentRepository } from '../appointments/infrastructure/persistence/PrismaAppointmentRepository';
 import { PrismaAppointmentStatusRepository } from '../appointments/infrastructure/persistence/PrismaAppointmentStatusRepository';
 
+// Gateway de pago
+import { IPaymentGateway } from './domain/gateways/IPaymentGateway';
+import { createPaymentGateway } from './infrastructure/gateways/PaymentGatewayFactory';
+
 // Use Cases
 import { CreatePayment } from './application/use-cases/CreatePayment';
+import { CreateCheckout } from './application/use-cases/CreateCheckout';
 import { GetPaymentById } from './application/use-cases/GetPaymentById';
 import { GetPaymentsByAppointment } from './application/use-cases/GetPaymentsByAppointment';
 import { GetPayments } from './application/use-cases/GetPayments';
@@ -36,14 +42,21 @@ export class PaymentContainer {
   private static instance: PaymentContainer;
 
   // Repository
-  private _paymentRepository: IPaymentRepository;
+  // Tipado como IGatewayAwarePaymentRepository (superset de IPaymentRepository,
+  // ver IPaymentGatewayLookup.ts): PrismaPaymentRepository ya implementa ambas
+  // interfaces, y CreateCheckout necesita findByIdempotencyKey.
+  private _paymentRepository: IGatewayAwarePaymentRepository;
 
   // Repositorios externos
   private _appointmentRepository: IAppointmentRepository;
   private _appointmentStatusRepository: IAppointmentStatusRepository;
 
+  // Gateway de pago
+  private _paymentGateway: IPaymentGateway;
+
   // Use Cases
   private _createPayment: CreatePayment;
+  private _createCheckout: CreateCheckout;
   private _getPaymentById: GetPaymentById;
   private _getPaymentsByAppointment: GetPaymentsByAppointment;
   private _getPayments: GetPayments;
@@ -92,11 +105,20 @@ export class PaymentContainer {
     this._appointmentRepository = new PrismaAppointmentRepository(this.prisma);
     this._appointmentStatusRepository = new PrismaAppointmentStatusRepository(this.prisma);
 
-    // 2. Inicializar use cases
+    // 2. Resolver el gateway de pago (único punto de decisión: F2, D-F2.1)
+    this._paymentGateway = createPaymentGateway();
+
+    // 3. Inicializar use cases
     this._createPayment = new CreatePayment(
       this._paymentRepository,
       this._appointmentRepository,
       this._appointmentStatusRepository,
+    );
+    this._createCheckout = new CreateCheckout(
+      this._paymentRepository,
+      this._appointmentRepository,
+      this._appointmentStatusRepository,
+      this._paymentGateway,
     );
     this._getPaymentById = new GetPaymentById(
       this._paymentRepository,
@@ -113,9 +135,10 @@ export class PaymentContainer {
     this._getPaymentStatistics = new GetPaymentStatistics(this._paymentRepository);
     this._updatePayment = new UpdatePayment(this._paymentRepository);
 
-    // 3. Inicializar controller
+    // 4. Inicializar controller
     this._paymentController = new PaymentController(
       this._createPayment,
+      this._createCheckout,
       this._getPaymentById,
       this._getPaymentsByAppointment,
       this._getPayments,
@@ -126,7 +149,7 @@ export class PaymentContainer {
       this._updatePayment,
     );
 
-    // 4. Inicializar routes
+    // 5. Inicializar routes
     this._paymentRoutes = new PaymentRoutes(
       this._paymentController,
       this.authMiddleware,
@@ -151,6 +174,10 @@ export class PaymentContainer {
 
   get createPayment(): CreatePayment {
     return this._createPayment;
+  }
+
+  get createCheckout(): CreateCheckout {
+    return this._createCheckout;
   }
 
   get getPaymentById(): GetPaymentById {
@@ -191,5 +218,13 @@ export class PaymentContainer {
 
   get paymentRepository(): IPaymentRepository {
     return this._paymentRepository;
+  }
+
+  // =====================
+  // GETTERS - GATEWAY
+  // =====================
+
+  get paymentGateway(): IPaymentGateway {
+    return this._paymentGateway;
   }
 }
