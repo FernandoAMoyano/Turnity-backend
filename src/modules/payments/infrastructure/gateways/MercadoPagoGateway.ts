@@ -168,7 +168,8 @@ export class MercadoPagoGateway implements IPaymentGateway {
 
   /**
    * Re-fetchea el estado autoritativo de un pago contra la API de Mercado
-   * Pago (nunca se confía en el payload del webhook)
+   * Pago (nunca se confía en el payload del webhook).
+   *
    * @param gatewayPaymentId - ID del pago en Mercado Pago (`string`). Viene
    * de `Payment.gatewayPaymentId` una vez persistido, o del `resourceId` que
    * devuelve `parseWebhookNotification` a partir del `data.id` de una
@@ -200,7 +201,8 @@ export class MercadoPagoGateway implements IPaymentGateway {
   }
 
   /**
-   * Ejecuta un reembolso total contra la API de Mercado Pago
+   * Ejecuta un reembolso total contra la API de Mercado Pago.
+   *
    * @param gatewayPaymentId - ID del pago en Mercado Pago a reembolsar
    * (`string`), el mismo valor persistido en `Payment.gatewayPaymentId`.
    * @param idempotencyKey - Clave que evita un doble reembolso ante un
@@ -236,6 +238,7 @@ export class MercadoPagoGateway implements IPaymentGateway {
 
   /**
    * Verifica la firma `x-signature` de una notificación de webhook
+   *
    * @description Formato verificado contra la documentación vigente de
    * Mercado Pago.
    * - Header `x-signature`: `ts=<epoch-ms>,v1=<hex-hmac>`.
@@ -260,6 +263,10 @@ export class MercadoPagoGateway implements IPaymentGateway {
    * @returns `true` solo si la firma es válida y el `ts` está dentro de
    * `signatureToleranceSeconds`; `false` en cualquier otro caso -- nunca lanza
    * una excepción (headers ausentes, malformados, o `v1` de longitud/hex inválido).
+   * La unidad del `ts` se normaliza con `normalizeTsToMs` antes de medir la
+   * ventana -- ver el comentario de ese método, la doc de MP se contradice
+   * entre segundos y milisegundos y de eso depende que el endpoint no
+   * devuelva 401 a todas las notificaciones reales.
    */
   verifyWebhookSignature(input: WebhookSignatureInput): boolean {
     if (!input.xSignature) {
@@ -271,8 +278,8 @@ export class MercadoPagoGateway implements IPaymentGateway {
       return false;
     }
 
-    const tsMs = Number(parsed.ts);
-    if (!Number.isFinite(tsMs)) {
+    const tsMs = MercadoPagoGateway.normalizeTsToMs(parsed.ts);
+    if (tsMs === null) {
       return false;
     }
 
@@ -339,6 +346,7 @@ export class MercadoPagoGateway implements IPaymentGateway {
 
   /**
    * Ejecuta un fetch con timeout y un reintento ante 5xx o error de red
+   *
    * @description Nunca reintenta ante 4xx: es un error del cliente, y
    * reintentar no lo va a corregir.
    * @param url - URL completa del endpoint de Mercado Pago a invocar
@@ -376,6 +384,7 @@ export class MercadoPagoGateway implements IPaymentGateway {
   /**
    * Arma los headers comunes a toda request: autenticación Bearer y, cuando
    * corresponde, la clave de idempotencia hacia la pasarela
+   *
    * @description Tipado como `Record<string, string>` y no como `HeadersInit`
    * a propósito: `@types/node` expone `fetch`/`RequestInit`/`Response` como
    * globales (vía `undici-types`), pero no promueve `HeadersInit` al
@@ -444,6 +453,46 @@ export class MercadoPagoGateway implements IPaymentGateway {
       refundedAmount: data.transaction_details?.total_refunded_amount ?? undefined,
       gatewayUpdatedAt: data.date_last_updated ? new Date(data.date_last_updated) : undefined,
     };
+  }
+
+  /**
+   * Normaliza el `ts` de la firma a milisegundos, cualquiera sea la unidad
+   * en que lo mande el proveedor
+   * @description La documentación de Mercado Pago se contradice consigo misma
+   * sobre este campo: las páginas de Checkout API y de suscripciones lo
+   * describen como "timestamp in seconds" y lo ejemplifican con
+   * `ts=1704908010` (10 dígitos), mientras que las de QR y Point dicen
+   * "in milliseconds" y lo ejemplifican con `ts=1742505638683` (13 dígitos).
+   * El `WebhookSignatureValidator` del SDK oficial de Node no chequea ninguna
+   * ventana temporal, así que tampoco desempata. Asumir una sola unidad es un
+   * fallo silencioso y total: si asumimos milisegundos y llegan segundos, la
+   * resta contra `Date.now()` da ~1.7e9 segundos de antigüedad y el webhook
+   * responde 401 a TODAS las notificaciones reales, con la firma válida.
+   *
+   * La unidad se deduce de la magnitud: cualquier epoch en segundos posterior
+   * a 1970 y anterior al año 5138 es menor que 1e11, y cualquier epoch en
+   * milisegundos posterior a 1973 es mayor. No hay ambigüedad posible en el
+   * rango de fechas en que este código puede correr.
+   *
+   * Solo afecta al cálculo de la ventana de tolerancia. El manifest del HMAC
+   * sigue usando el `ts` como string crudo, exactamente como llegó -- es lo
+   * único que firma el proveedor, y normalizarlo ahí rompería la firma.
+   * @param rawTs - Valor del campo `ts` tal como vino en `x-signature`
+   * (`string`, sin convertir)
+   * @returns El instante en milisegundos, o `null` si el valor no es un
+   * número finito y positivo (nunca lanza una excepción: es el llamador el
+   * que devuelve `false` en ese caso)
+   */
+  private static normalizeTsToMs(rawTs: string): number | null {
+    /** Frontera entre epoch en segundos y epoch en milisegundos (ver arriba) */
+    const SECONDS_MILLISECONDS_BOUNDARY = 1e11;
+
+    const value = Number(rawTs);
+    if (!Number.isFinite(value) || value <= 0) {
+      return null;
+    }
+
+    return value < SECONDS_MILLISECONDS_BOUNDARY ? value * 1000 : value;
   }
 
   /**

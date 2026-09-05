@@ -229,10 +229,6 @@ $RECYCLE.BIN/
 # Excepcion: smoke test para verificar el deploy (Fase 5) -- se documenta
 # en el Readme, tiene que estar disponible en el repo.
 !scripts/smoke-health.sh
-src/docs/INTERVENTION_PLAN.md
-src/docs/session-handoff-v*.md
-src/docs/SKILL.md
-src/docs/INTERVENTION_PLAN_v2.md
-src/docs/audit-v*.md
-src/docs/audit-Readme.md
-src/docs/action-plan-*
+# Notas de trabajo internas: planificacion, auditorias y handoffs entre
+# sesiones. Viven en el repo para tenerlas a mano, pero no se versionan.
+src/docs/notes/

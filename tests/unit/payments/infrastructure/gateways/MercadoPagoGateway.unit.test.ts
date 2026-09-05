@@ -397,6 +397,60 @@ describe('MercadoPagoGateway', () => {
 
       expect(result).toBe(true);
     });
+
+    // ==========================================
+    // UNIDAD DEL ts
+    // ==========================================
+    // La documentación de Mercado Pago se contradice sobre este campo: unas
+    // páginas dan el ts en segundos (10 dígitos) y otras en milisegundos (13).
+    // Con la unidad equivocada, la antigüedad calculada se va a años y el
+    // webhook rechaza notificaciones válidas, así que estos tests fijan que
+    // las dos unidades entran por la ventana de tolerancia.
+
+    // Debería aceptar un ts en segundos (10 dígitos) dentro de la ventana
+    it('should accept a ts expressed in seconds', () => {
+      const ts = String(Math.floor(Date.now() / 1000));
+      const v1 = signManifest(SECRET, ts, dataId, xRequestId);
+      const gateway = new MercadoPagoGateway(baseConfig());
+
+      const result = gateway.verifyWebhookSignature({
+        xSignature: `ts=${ts},v1=${v1}`,
+        xRequestId,
+        dataId,
+      });
+
+      expect(result).toBe(true);
+    });
+
+    // Debería rechazar un ts en segundos fuera de la ventana de tolerancia:
+    // la normalización no debe volver permisiva la ventana
+    it('should reject a stale ts expressed in seconds', () => {
+      const staleTs = String(Math.floor(Date.now() / 1000) - 10 * 60); // 10 minutos atrás
+      const v1 = signManifest(SECRET, staleTs, dataId, xRequestId);
+      const gateway = new MercadoPagoGateway(baseConfig());
+
+      const result = gateway.verifyWebhookSignature({
+        xSignature: `ts=${staleTs},v1=${v1}`,
+        xRequestId,
+        dataId,
+      });
+
+      expect(result).toBe(false);
+    });
+
+    // Debería rechazar un ts que no es un número, sin lanzar una excepción
+    it('should return false for a non-numeric ts', () => {
+      const gateway = new MercadoPagoGateway(baseConfig());
+      const v1 = signManifest(SECRET, 'not-a-number', dataId, xRequestId);
+
+      expect(
+        gateway.verifyWebhookSignature({
+          xSignature: `ts=not-a-number,v1=${v1}`,
+          xRequestId,
+          dataId,
+        }),
+      ).toBe(false);
+    });
   });
 
   describe('parseWebhookNotification', () => {

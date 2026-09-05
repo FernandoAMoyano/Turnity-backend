@@ -48,14 +48,8 @@ class App {
       prisma,
       this.authContainer.authMiddleware,
     );
-    this.paymentContainer = PaymentContainer.getInstance(
-      prisma,
-      this.authContainer.authMiddleware,
-    );
-    this.holidayContainer = HolidayContainer.getInstance(
-      prisma,
-      this.authContainer.authMiddleware,
-    );
+    this.paymentContainer = PaymentContainer.getInstance(prisma, this.authContainer.authMiddleware);
+    this.holidayContainer = HolidayContainer.getInstance(prisma, this.authContainer.authMiddleware);
 
     this.setupMiddleware();
     this.setupRoutes();
@@ -63,6 +57,12 @@ class App {
   }
 
   private setupMiddleware(): void {
+    // Confiar en el primer proxy de la cadena (Render termina TLS y hace
+    // forwarding). Sin esto, req.ip es la IP del proxy en TODAS las requests:
+    // el logging de IP miente y cualquier rate limiter por IP que se agregue
+    // en el futuro agruparia a todo el mundo en un solo contador.
+    this.app.set('trust proxy', 1);
+
     this.app.use(requestIdMiddleware);
     this.app.use(helmet());
     this.app.use(
@@ -76,12 +76,39 @@ class App {
     // token CSRF (double-submit). -- F5b
     this.app.use(cookieParser());
 
+    // Webhooks de pasarela: se montan ACA, entre cookieParser y express.json,
+    // El router del webhook trae su propio express.raw({ type: 'application/json', limit: '1mb' })
+    // para recibir el body sin parsear; si se montara despues (en setupRoutes, con el resto),
+    // el express.json global de abajo lo habria parseado primero y el body
+    // llegaria como objeto, con el limite de 10mb en vez de 1mb y sin los
+    // bytes originales para auditar. Express matchea en orden: estas requests
+    // responden aca y nunca alcanzan el parser global.
+    // Ver src/modules/payments/presentation/routes/PaymentWebhookRoutes.ts
+    // para el detalle de lo que este router deliberadamente NO tiene (JWT,
+    // CSRF, rate limiter, express-validator).
+    this.setupWebhookRoutes();
+
     this.app.use(express.json({ limit: '10mb' }));
     this.app.use(express.urlencoded({ extended: true }));
 
     if (process.env.NODE_ENV !== 'test') {
       this.app.use(morgan('combined'));
     }
+  }
+
+  /**
+   * Monta los routers que necesitan el body crudo, antes de los body-parsers
+   * globales
+   * @description Metodo aparte de setupRoutes(): lo que lo
+   * distingue no es que sean rutas, sino EN QUE PUNTO de la cadena de
+   * middlewares se montan. Ver el comentario de la invocacion en
+   * setupMiddleware().
+   */
+  private setupWebhookRoutes(): void {
+    this.app.use(
+      '/api/v1/payments/webhooks',
+      this.paymentContainer.paymentWebhookRoutes.getRouter(),
+    );
   }
 
   private setupRoutes(): void {
@@ -120,7 +147,13 @@ class App {
     this.app.use('/api/v1/auth', this.authContainer.authRoutes.getRouter());
     this.app.use('/api/v1', this.serviceContainer.servicesRoutes.getRouter());
     this.app.use('/api/v1/appointments', this.appointmentContainer.appointmentRoutes.getRouter());
-    this.app.use('/api/v1/notifications', this.notificationContainer.notificationRoutes.getRouter());
+    this.app.use(
+      '/api/v1/notifications',
+      this.notificationContainer.notificationRoutes.getRouter(),
+    );
+    // El mount de /api/v1/payments queda igual: nunca recibe las requests del
+    // webhook, porque el router de /api/v1/payments/webhooks ya respondio
+    // (montado en setupMiddleware, antes que esto).
     this.app.use('/api/v1/payments', this.paymentContainer.paymentRoutes.getRouter());
     this.app.use('/api/v1/holidays', this.holidayContainer.holidayRoutes.getRouter());
 
