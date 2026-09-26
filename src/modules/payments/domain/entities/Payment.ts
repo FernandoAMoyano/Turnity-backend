@@ -71,6 +71,14 @@ export interface ApplyGatewayStatusInput {
    * Identificador del reembolso en el proveedor
    */
   gatewayRefundId?: string;
+
+  /**
+   * Motivo del reembolso declarado por quien lo ordenó
+   * @description Es dato nuestro, no del proveedor: la pasarela no lo conoce.
+   * Solo se persiste cuando la transición a REFUNDED se aplica de verdad, así
+   * que un reintento sobre un pago ya reembolsado no pisa el motivo original.
+   */
+  refundReason?: string;
 }
 
 /**
@@ -433,7 +441,32 @@ export class Payment {
       this._failureReason = input.failureReason;
     }
 
+    if (input.status === PaymentStatusEnum.REFUNDED && input.refundReason) {
+      this._refundReason = input.refundReason;
+    }
+
     return 'applied';
+  }
+
+  /**
+   * Registra un reembolso que la pasarela aceptó pero todavía no confirmó
+   * @description Hermano de `recordCheckoutCreated`: anota lo que devolvió la
+   * pasarela sin mover el estado del pago. El pago sigue COMPLETED hasta que
+   * el reembolso se confirme (por webhook o por sincronización manual), que es
+   * lo que después aplica la transición a REFUNDED. No toca `lastSyncedAt`:
+   * ese campo registra la última relectura del estado contra la pasarela, y
+   * pedir un reembolso no es una relectura.
+   * @param gatewayRefundId - Identificador del reembolso en la pasarela
+   * @param amount - Monto que la pasarela informó como reembolsado
+   * @param reason - Motivo declarado por quien ordenó el reembolso. Se guarda
+   * ya, aunque el reembolso siga sin confirmarse, para no perder el dato si
+   * después lo confirma un webhook que no lo conoce.
+   */
+  recordRefundRequested(gatewayRefundId: string, amount: number, reason?: string): void {
+    this._gatewayRefundId = gatewayRefundId;
+    this._refundedAmount = amount;
+    if (reason) this._refundReason = reason;
+    this._updatedAt = new Date();
   }
 
   /**
