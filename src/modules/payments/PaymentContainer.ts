@@ -26,6 +26,7 @@ import { GetPaymentsByAppointment } from './application/use-cases/GetPaymentsByA
 import { GetPayments } from './application/use-cases/GetPayments';
 import { ProcessPayment } from './application/use-cases/ProcessPayment';
 import { RefundPayment } from './application/use-cases/RefundPayment';
+import { SyncPaymentWithGateway } from './application/use-cases/SyncPaymentWithGateway';
 import { CancelPayment } from './application/use-cases/CancelPayment';
 import { GetPaymentStatistics } from './application/use-cases/GetPaymentStatistics';
 import { UpdatePayment } from './application/use-cases/UpdatePayment';
@@ -71,6 +72,7 @@ export class PaymentContainer {
   private _getPayments: GetPayments;
   private _processPayment: ProcessPayment;
   private _refundPayment: RefundPayment;
+  private _syncPaymentWithGateway: SyncPaymentWithGateway;
   private _cancelPayment: CancelPayment;
   private _getPaymentStatistics: GetPaymentStatistics;
   private _updatePayment: UpdatePayment;
@@ -147,7 +149,15 @@ export class PaymentContainer {
     );
     this._getPayments = new GetPayments(this._paymentRepository);
     this._processPayment = new ProcessPayment(this._paymentRepository, this._appointmentRepository);
-    this._refundPayment = new RefundPayment(this._paymentRepository, this._appointmentRepository);
+    this._refundPayment = new RefundPayment(
+      this._paymentRepository,
+      this._appointmentRepository,
+      this._paymentGateway,
+    );
+    this._syncPaymentWithGateway = new SyncPaymentWithGateway(
+      this._paymentRepository,
+      this._paymentGateway,
+    );
     this._cancelPayment = new CancelPayment(this._paymentRepository, this._appointmentRepository);
     this._getPaymentStatistics = new GetPaymentStatistics(this._paymentRepository);
     this._updatePayment = new UpdatePayment(this._paymentRepository);
@@ -161,6 +171,7 @@ export class PaymentContainer {
       this._getPayments,
       this._processPayment,
       this._refundPayment,
+      this._syncPaymentWithGateway,
       this._cancelPayment,
       this._getPaymentStatistics,
       this._updatePayment,
@@ -239,6 +250,10 @@ export class PaymentContainer {
 
   get refundPayment(): RefundPayment {
     return this._refundPayment;
+  }
+
+  get syncPaymentWithGateway(): SyncPaymentWithGateway {
+    return this._syncPaymentWithGateway;
   }
 
   get cancelPayment(): CancelPayment {

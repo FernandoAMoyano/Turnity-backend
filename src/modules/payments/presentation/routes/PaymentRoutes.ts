@@ -33,6 +33,7 @@ export class PaymentRoutes {
    * - POST /payments/:id/process - Procesar pago (admin, stylist dueño -- F18)
    * - POST /payments/:id/refund - Reembolsar pago (admin)
    * - POST /payments/:id/cancel - Cancelar pago (admin, stylist dueño -- F18)
+   * - POST /payments/:id/sync - Reconciliar un pago contra la pasarela (admin)
    * - PUT /payments/:id - Actualizar pago (admin)
    */
   private setupRoutes(): void {
@@ -169,6 +170,25 @@ export class PaymentRoutes {
       ValidationMiddleware.handleValidationErrors,
       (req: Request, res: Response, next: NextFunction) => {
         this.paymentController.cancel(req, res).catch(next);
+      },
+    );
+
+    // POST /:id/sync - Reconciliar un pago contra la pasarela (admin only).
+    // Es una herramienta de operación, no parte del flujo de cobro: releer el
+    // estado de un pago ajeno es justamente lo que hace falta para destrabar
+    // uno desfasado, así que no hay ownership que chequear y ningún rol
+    // además de ADMIN llega hasta el caso de uso.
+    // Reutiliza paymentById: la validación es la misma que la de /cancel (un
+    // UUID en el path y nada más), y duplicarla sería solo otro nombre para
+    // la misma regla.
+    this.router.post(
+      '/:id/sync',
+      this.authMiddleware.authenticate.bind(this.authMiddleware),
+      this.authMiddleware.authorize(['ADMIN']),
+      PaymentValidations.paymentById,
+      ValidationMiddleware.handleValidationErrors,
+      (req: Request, res: Response, next: NextFunction) => {
+        this.paymentController.sync(req, res).catch(next);
       },
     );
   }

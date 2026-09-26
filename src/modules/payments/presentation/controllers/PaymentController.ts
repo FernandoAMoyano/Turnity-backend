@@ -6,6 +6,7 @@ import { GetPaymentsByAppointment } from '../../application/use-cases/GetPayment
 import { GetPayments } from '../../application/use-cases/GetPayments';
 import { ProcessPayment } from '../../application/use-cases/ProcessPayment';
 import { RefundPayment } from '../../application/use-cases/RefundPayment';
+import { SyncPaymentWithGateway } from '../../application/use-cases/SyncPaymentWithGateway';
 import { CancelPayment } from '../../application/use-cases/CancelPayment';
 import { GetPaymentStatistics } from '../../application/use-cases/GetPaymentStatistics';
 import { UpdatePayment } from '../../application/use-cases/UpdatePayment';
@@ -17,6 +18,17 @@ import { UnauthorizedError } from '../../../../shared/exceptions/UnauthorizedErr
  * Controlador para el módulo de pagos
  * @description Maneja las peticiones HTTP relacionadas con pagos
  * Los errores burbujean al errorHandler global via .catch(next) en PaymentRoutes
+ *
+ * Todo método que lea el cuerpo lo hace con `req.body ?? {}`. Express 5 dejó
+ * de completar `req.body` con un objeto vacío cuando la request no trae
+ * cuerpo: lo deja en `undefined`, y desestructurarlo directo lanza un
+ * TypeError que el error handler global traduce a 500. Alcanza a toda ruta
+ * cuyos campos de cuerpo sean opcionales, porque la validación las deja pasar
+ * sin nada que validar: reembolsar sin motivo y actualizar sin campos son dos
+ * operaciones válidas que respondían 500. Donde hay un campo requerido la
+ * validación corta antes con 400, pero el resguardo se aplica igual en todos
+ * los métodos, para que volver opcional un campo mañana no reintroduzca el
+ * mismo 500 en silencio.
  */
 export class PaymentController {
   constructor(
@@ -27,6 +39,7 @@ export class PaymentController {
     private _getPayments: GetPayments,
     private _processPayment: ProcessPayment,
     private _refundPayment: RefundPayment,
+    private _syncPaymentWithGateway: SyncPaymentWithGateway,
     private _cancelPayment: CancelPayment,
     private _getPaymentStatistics: GetPaymentStatistics,
     private _updatePayment: UpdatePayment,
@@ -46,7 +59,7 @@ export class PaymentController {
       throw new UnauthorizedError('Authentication required');
     }
 
-    const { amount, appointmentId } = req.body;
+    const { amount, appointmentId } = req.body ?? {};
 
     const payment = await this._createPayment.execute(
       {
@@ -86,7 +99,7 @@ export class PaymentController {
       throw new UnauthorizedError('Authentication required');
     }
 
-    const { appointmentId, amount, description } = req.body;
+    const { appointmentId, amount, description } = req.body ?? {};
     // express-validator normaliza el nombre de header a minúsculas
     const idempotencyKey = req.header('idempotency-key') || undefined;
 
@@ -211,7 +224,7 @@ export class PaymentController {
     }
 
     const { id } = req.params;
-    const { method } = req.body;
+    const { method } = req.body ?? {};
 
     const payment = await this._processPayment.execute(
       {
@@ -234,8 +247,11 @@ export class PaymentController {
    * @route POST /payments/:id/refund
    * @param req - Request autenticado con ID del pago y razón del reembolso en el body
    * @param res - Response de Express
-   * @returns Promise con el pago reembolsado
-   * @responseStatus 200 - Pago reembolsado exitosamente
+   * @returns Promise con el pago reembolsado, o todavía completado si la
+   * pasarela dejó el reembolso en curso
+   * @responseStatus 200 - Reembolso aplicado: el pago quedó reembolsado
+   * @responseStatus 202 - Reembolso aceptado por la pasarela pero sin
+   * confirmar: el pago sigue completado a la espera de la confirmación
    * @throws NotFoundError si el pago no existe
    * @throws ForbiddenError si el usuario no tiene permisos sobre la cita del pago
    * @throws BusinessRuleError si el pago no puede ser reembolsado
@@ -246,7 +262,7 @@ export class PaymentController {
     }
 
     const { id } = req.params;
-    const { reason } = req.body;
+    const { reason } = req.body ?? {};
 
     const payment = await this._refundPayment.execute(
       {
@@ -257,10 +273,48 @@ export class PaymentController {
       req.user.roleName,
     );
 
-    return res.status(200).json({
+    // El estado resultante es lo que separa los dos desenlaces, y la regla es
+    // exhaustiva: un reembolso manual siempre deja el pago reembolsado, y uno
+    // de pasarela solo lo deja completado cuando el proveedor aceptó la orden
+    // sin confirmarla todavía. Un reembolso que el proveedor rechaza no llega
+    // hasta acá: se propaga como error.
+    const applied = payment.status === PaymentStatusEnum.REFUNDED;
+
+    return res.status(applied ? 200 : 202).json({
       success: true,
       data: payment,
-      message: 'Payment refunded successfully',
+      message: applied
+        ? 'Payment refunded successfully'
+        : 'Refund accepted by the payment gateway and pending confirmation',
+    });
+  }
+
+  /**
+   * Reconcilia un pago contra la pasarela releyendo su estado autoritativo
+   * @route POST /payments/:id/sync
+   * @param req - Request autenticado con ID del pago en params
+   * @param res - Response de Express
+   * @returns Promise con el pago actualizado y si la sincronización lo movió
+   * @responseStatus 200 - Pago sincronizado
+   * @throws NotFoundError si el pago no existe
+   * @throws BusinessRuleError si el pago no es de pasarela, si todavía no
+   * tiene identificador en el proveedor, o si el proveedor no lo reconoce
+   */
+  async sync(req: AuthenticatedRequest, res: Response): Promise<Response> {
+    if (!req.user?.userId || !req.user?.roleName) {
+      throw new UnauthorizedError('Authentication required');
+    }
+
+    const { id } = req.params;
+
+    const { payment, changed } = await this._syncPaymentWithGateway.execute(id);
+
+    return res.status(200).json({
+      success: true,
+      data: { payment, changed },
+      message: changed
+        ? 'Payment synced with the payment gateway and its status changed'
+        : 'Payment synced with the payment gateway, no status change',
     });
   }
 
@@ -328,7 +382,7 @@ export class PaymentController {
    */
   async update(req: AuthenticatedRequest, res: Response): Promise<Response> {
     const { id } = req.params;
-    const { amount } = req.body;
+    const { amount } = req.body ?? {};
 
     const payment = await this._updatePayment.execute(id, { amount });
 
