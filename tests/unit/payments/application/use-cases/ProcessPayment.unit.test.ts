@@ -1,7 +1,7 @@
 import { ProcessPayment } from '../../../../../src/modules/payments/application/use-cases/ProcessPayment';
 import { IPaymentRepository } from '../../../../../src/modules/payments/domain/repositories/IPaymentRepository';
 import { IAppointmentRepository } from '../../../../../src/modules/appointments/domain/repositories/IAppointmentRepository';
-import { Payment, PaymentStatusEnum, PaymentMethodEnum } from '../../../../../src/modules/payments/domain/entities/Payment';
+import { Payment, PaymentStatusEnum, PaymentMethodEnum, PaymentProviderEnum } from '../../../../../src/modules/payments/domain/entities/Payment';
 import { NotFoundError } from '../../../../../src/shared/exceptions/NotFoundError';
 import { BusinessRuleError } from '../../../../../src/shared/exceptions/BusinessRuleError';
 import { ForbiddenError } from '../../../../../src/shared/exceptions/ForbiddenError';
@@ -308,6 +308,84 @@ describe('ProcessPayment Use Case', () => {
           'STYLIST',
         ),
       ).rejects.toThrow(NotFoundError);
+    });
+  });
+
+  describe('Gateway-backed guard', () => {
+    const buildGatewayPayment = (status: PaymentStatusEnum): Payment =>
+      new Payment({
+        id: '123e4567-e89b-12d3-a456-426614174060',
+        amount: 100.0,
+        status,
+        method: status === PaymentStatusEnum.PENDING ? null : PaymentMethodEnum.ONLINE,
+        paymentDate: status === PaymentStatusEnum.PENDING ? null : new Date(),
+        appointmentId: validAppointmentId,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        provider: PaymentProviderEnum.MERCADO_PAGO,
+        idempotencyKey: 'gateway-idempotency-key',
+      });
+
+    // Un pago de pasarela pendiente no debe poder completarse a mano: sería
+    // dar por cobrado un dinero que todavía no entró
+    it('should throw BusinessRuleError for a pending gateway-backed payment', async () => {
+      const payment = buildGatewayPayment(PaymentStatusEnum.PENDING);
+      mockPaymentRepository.findById.mockResolvedValue(payment);
+
+      await expect(
+        processPayment.execute(
+          { paymentId: payment.id, method: PaymentMethodEnum.CASH },
+          adminRequesterId,
+          adminRole,
+        ),
+      ).rejects.toThrow(BusinessRuleError);
+
+      expect(mockPaymentRepository.update).not.toHaveBeenCalled();
+      expect(payment.status).toBe(PaymentStatusEnum.PENDING);
+    });
+
+    // La guarda va antes del chequeo de estado: el motivo tiene que ser que el
+    // pago es de pasarela, no que no esté pendiente
+    it('should report the gateway reason instead of the pending-state reason for a completed gateway-backed payment', async () => {
+      const payment = buildGatewayPayment(PaymentStatusEnum.COMPLETED);
+      mockPaymentRepository.findById.mockResolvedValue(payment);
+
+      await expect(
+        processPayment.execute(
+          { paymentId: payment.id, method: PaymentMethodEnum.CASH },
+          adminRequesterId,
+          adminRole,
+        ),
+      ).rejects.toThrow(/gateway/i);
+    });
+
+    // La guarda va después del NotFoundError: un pago inexistente sigue siendo 404
+    it('should still throw NotFoundError when the payment does not exist', async () => {
+      mockPaymentRepository.findById.mockResolvedValue(null);
+
+      await expect(
+        processPayment.execute(
+          { paymentId: '123e4567-e89b-12d3-a456-426614174061', method: PaymentMethodEnum.CASH },
+          adminRequesterId,
+          adminRole,
+        ),
+      ).rejects.toThrow(NotFoundError);
+    });
+
+    // La guarda va después de la autorización: un STYLIST ajeno recibe 403 y
+    // no se entera de que el pago es de pasarela
+    it('should throw ForbiddenError before the guard when the stylist does not own the appointment', async () => {
+      const payment = buildGatewayPayment(PaymentStatusEnum.PENDING);
+      mockPaymentRepository.findById.mockResolvedValue(payment);
+      mockAppointmentRepository.findById.mockResolvedValue(mockAppointment as any);
+
+      await expect(
+        processPayment.execute(
+          { paymentId: payment.id, method: PaymentMethodEnum.CASH },
+          'other-stylist-id',
+          'STYLIST',
+        ),
+      ).rejects.toThrow(ForbiddenError);
     });
   });
 });

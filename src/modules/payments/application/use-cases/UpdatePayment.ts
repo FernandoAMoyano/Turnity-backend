@@ -27,6 +27,15 @@ export class UpdatePayment {
       throw new NotFoundError('Payment', paymentId);
     }
 
+    // Antes del chequeo de estado a propósito: la intención de cobro ya existe
+    // en la pasarela con un monto fijo, y cambiarlo de este lado dejaría los
+    // dos importes distintos sin ninguna forma de reconciliarlos.
+    if (payment.isGatewayBacked) {
+      throw new BusinessRuleError(
+        'Gateway-backed payments cannot be updated: the amount is already committed at the payment gateway',
+      );
+    }
+
     if (!payment.isPending) {
       throw new BusinessRuleError('Only pending payments can be updated');
     }

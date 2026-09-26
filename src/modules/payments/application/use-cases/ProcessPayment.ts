@@ -43,6 +43,17 @@ export class ProcessPayment {
 
     await this.validateAccessPermissions(payment.appointmentId, requesterId, requesterRole);
 
+    // Antes del chequeo de estado a propósito: un pago respaldado por una
+    // pasarela no se completa a mano en ningún estado. Si esta guarda fuera
+    // después, un pago de pasarela pendiente se marcaría como cobrado sin que
+    // el dinero haya entrado, y uno ya resuelto respondería "solo se pueden
+    // procesar pagos pendientes", que es un motivo falso.
+    if (payment.isGatewayBacked) {
+      throw new BusinessRuleError(
+        'Gateway-backed payments are completed by the payment gateway, not manually',
+      );
+    }
+
     if (!payment.isPending) {
       throw new BusinessRuleError('Only pending payments can be processed');
     }
