@@ -270,6 +270,59 @@ describe('MercadoPagoGateway', () => {
 
       expect(result.status).toBe('pending');
     });
+
+    // Un reembolso rechazado es terminal y no debe confundirse con uno en
+    // curso: colapsados juntos, la API contestaría "esperá la confirmación"
+    // por algo que el proveedor ya descartó
+    it('should map a rejected refund as rejected', async () => {
+      const { fetchImpl } = makeFakeFetch([
+        { ok: true, status: 201, body: { id: 555, amount: 1500.5, status: 'rejected' } },
+      ]);
+      const gateway = new MercadoPagoGateway(baseConfig(), fetchImpl as unknown as typeof fetch);
+
+      const result = await gateway.refund('987654', 'idem-refund-1');
+
+      expect(result.status).toBe('rejected');
+    });
+
+    // cancelled es igual de terminal que rejected: el dinero no volvió
+    it('should map a cancelled refund as rejected', async () => {
+      const { fetchImpl } = makeFakeFetch([
+        { ok: true, status: 201, body: { id: 556, amount: 0, status: 'cancelled' } },
+      ]);
+      const gateway = new MercadoPagoGateway(baseConfig(), fetchImpl as unknown as typeof fetch);
+
+      const result = await gateway.refund('987654', 'idem-refund-1');
+
+      expect(result.status).toBe('rejected');
+    });
+
+    // Un valor que el proveedor agregue sin aviso no debe declarar fallido un
+    // reembolso que quizás se aplicó: queda en curso para que lo resuelva una
+    // sincronización posterior
+    it('should map an unknown refund status as pending', async () => {
+      const { fetchImpl } = makeFakeFetch([
+        { ok: true, status: 201, body: { id: 557, amount: 10, status: 'brand_new_status' } },
+      ]);
+      const gateway = new MercadoPagoGateway(baseConfig(), fetchImpl as unknown as typeof fetch);
+
+      const result = await gateway.refund('987654', 'idem-refund-1');
+
+      expect(result.status).toBe('pending');
+    });
+
+    // La clave de idempotencia viaja en el header que el proveedor exige
+    it('should send the idempotency key as a header', async () => {
+      const { fetchImpl, calls } = makeFakeFetch([
+        { ok: true, status: 201, body: { id: 558, amount: 10, status: 'approved' } },
+      ]);
+      const gateway = new MercadoPagoGateway(baseConfig(), fetchImpl as unknown as typeof fetch);
+
+      await gateway.refund('987654', 'idem-refund-9');
+
+      const headers = calls[0].init.headers as Record<string, string>;
+      expect(headers['X-Idempotency-Key']).toBe('idem-refund-9');
+    });
   });
 
   describe('verifyWebhookSignature', () => {

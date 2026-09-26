@@ -75,6 +75,24 @@ export class MercadoPagoGateway implements IPaymentGateway {
   private static readonly BASE_URL = 'https://api.mercadopago.com';
 
   /**
+   * Estados de reembolso documentados por Mercado Pago, colapsados a los tres
+   * desenlaces del puerto
+   * @description `rejected` y `cancelled` son terminales y significan que el
+   * dinero no volvió: separarlos de `in_process` es lo que evita que la API
+   * conteste "el reembolso quedó en curso, esperá la confirmación" por uno que
+   * el proveedor ya descartó, y que nunca va a confirmarse. `authorized` no
+   * aplica a un reembolso pero está documentado en el mismo conjunto de
+   * valores, así que se contempla y se trata como no resuelto.
+   */
+  private static readonly REFUND_STATUS_MAP: Readonly<Record<string, GatewayRefund['status']>> = {
+    approved: 'approved',
+    in_process: 'pending',
+    authorized: 'pending',
+    rejected: 'rejected',
+    cancelled: 'rejected',
+  };
+
+  /**
    * @param config - Credenciales y parámetros ya resueltos del adapter
    * (tipo `MercadoPagoGatewayConfig`): `accessToken` y `webhookSecret` de la
    * cuenta de Mercado Pago, `currency`/`publicApiUrl`/`frontendUrl`/
@@ -210,7 +228,8 @@ export class MercadoPagoGateway implements IPaymentGateway {
    * como header `X-Idempotency-Key`.
    * @returns `GatewayRefund` con `gatewayRefundId` (el `id` que devuelve
    * Mercado Pago para el reembolso), `amount` efectivamente reembolsado y
-   * `status` colapsado a `'approved'` o `'pending'` (ver mapeo en el cuerpo).
+   * `status` colapsado a `'approved'`, `'pending'` o `'rejected'` (ver el
+   * mapeo en `REFUND_STATUS_MAP`).
    * @throws Error si Mercado Pago responde con un status HTTP no exitoso.
    */
   async refund(gatewayPaymentId: string, idempotencyKey: string): Promise<GatewayRefund> {
@@ -232,8 +251,22 @@ export class MercadoPagoGateway implements IPaymentGateway {
     return {
       gatewayRefundId: String(data.id),
       amount: data.amount,
-      status: data.status === 'approved' ? 'approved' : 'pending',
+      status: MercadoPagoGateway.toRefundStatus(data.status),
     };
+  }
+
+  /**
+   * Traduce el estado crudo de un reembolso al vocabulario del puerto
+   * @description El estado desconocido cae en `'pending'`, no en `'rejected'`:
+   * un valor que el proveedor agregue sin aviso no debería hacer que la API
+   * declare fallido un reembolso que quizás se aplicó. Dejarlo en curso hace
+   * que una sincronización posterior lo resuelva contra el estado real del
+   * pago.
+   * @param rawStatus - Estado tal como lo informa el proveedor
+   * @returns El estado colapsado a los tres desenlaces del puerto
+   */
+  private static toRefundStatus(rawStatus: string): GatewayRefund['status'] {
+    return MercadoPagoGateway.REFUND_STATUS_MAP[rawStatus] ?? 'pending';
   }
 
   /**

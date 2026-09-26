@@ -70,10 +70,14 @@ export interface GatewayRefund {
   /** Monto efectivamente reembolsado */
   amount: number;
   /**
-   * Estado del reembolso. `'approved'` ya se aplicó del lado de la pasarela;
-   * `'pending'` puede resolverse más tarde (webhook o `/sync`).
+   * Estado del reembolso, colapsado a tres desenlaces
+   * @description `'approved'` ya se aplicó del lado de la pasarela y el dinero
+   * volvió; `'pending'` quedó en curso y puede resolverse más tarde, por
+   * notificación de la pasarela o por sincronización manual; `'rejected'` la
+   * pasarela lo rechazó y no se va a resolver solo. Distinguir los dos últimos
+   * es lo que evita quedar esperando una confirmación que nunca va a llegar.
    */
-  status: 'approved' | 'pending';
+  status: 'approved' | 'pending' | 'rejected';
 }
 
 /**
