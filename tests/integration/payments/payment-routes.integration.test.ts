@@ -1211,4 +1211,257 @@ describe('Payments Integration Tests', () => {
       expect(cancelResponse.status).toBe(200);
     });
   });
+
+  // Guardas de manual contra pasarela sobre las rutas de mutación
+  describe('Gateway-backed guards on manual mutation routes', () => {
+    /**
+     * Inserta un pago respaldado por pasarela directo por Prisma. En este
+     * entorno no hay pasarela configurada, así que no hay forma de llegar a uno
+     * pasando por el endpoint de checkout (siempre termina FAILED); mismo
+     * criterio que el test de D5 más arriba en este archivo.
+     */
+    const createGatewayBackedPayment = async (status: 'PENDING' | 'COMPLETED') => {
+      const appointment = await createConfirmedTestAppointment({ stylistId });
+      return testPrisma.payment.create({
+        data: {
+          id: generateUuid(),
+          amount: 100,
+          status,
+          method: status === 'COMPLETED' ? 'ONLINE' : null,
+          paymentDate: status === 'COMPLETED' ? new Date() : null,
+          appointmentId: appointment.id,
+          provider: 'MERCADO_PAGO',
+          idempotencyKey: generateUuid(),
+        },
+      });
+    };
+
+    // Debería rechazar procesar a mano un pago de pasarela
+    it('should reject processing a gateway-backed payment with 422', async () => {
+      const payment = await createGatewayBackedPayment('PENDING');
+
+      const response = await request(app)
+        .post(`/api/v1/payments/${payment.id}/process`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ method: 'CASH' });
+
+      expect(response.status).toBe(422);
+      expect(response.body.success).toBe(false);
+
+      const stored = await testPrisma.payment.findUnique({ where: { id: payment.id } });
+      expect(stored?.status).toBe('PENDING');
+    });
+
+    // Debería rechazar cancelar a mano un pago de pasarela
+    it('should reject cancelling a gateway-backed payment with 422', async () => {
+      const payment = await createGatewayBackedPayment('PENDING');
+
+      const response = await request(app)
+        .post(`/api/v1/payments/${payment.id}/cancel`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(422);
+
+      const stored = await testPrisma.payment.findUnique({ where: { id: payment.id } });
+      expect(stored?.status).toBe('PENDING');
+    });
+
+    // Debería rechazar cambiarle el monto a un pago de pasarela
+    it('should reject updating a gateway-backed payment with 422', async () => {
+      const payment = await createGatewayBackedPayment('PENDING');
+
+      const response = await request(app)
+        .put(`/api/v1/payments/${payment.id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ amount: 250.0 });
+
+      expect(response.status).toBe(422);
+
+      const stored = await testPrisma.payment.findUnique({ where: { id: payment.id } });
+      expect(Number(stored?.amount)).toBe(100);
+    });
+
+    // Regresión: el camino manual sigue intacto de punta a punta
+    it('should still process and refund a manual payment', async () => {
+      const createResponse = await request(app)
+        .post('/api/v1/payments')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ amount: 60.0, appointmentId: testAppointmentId });
+
+      const processResponse = await request(app)
+        .post(`/api/v1/payments/${createResponse.body.data.id}/process`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ method: 'CASH' });
+      expect(processResponse.status).toBe(200);
+
+      const refundResponse = await request(app)
+        .post(`/api/v1/payments/${createResponse.body.data.id}/refund`)
+        .set('Authorization', `Bearer ${adminToken}`);
+      expect(refundResponse.status).toBe(200);
+      expect(refundResponse.body.data.status).toBe('REFUNDED');
+    });
+
+    // Sin identificador en la pasarela no hay reembolso remoto posible, y el
+    // motivo tiene que ser ese, no "solo se pueden reembolsar pagos completados"
+    it('should reject refunding a gateway-backed payment that has no gateway payment id', async () => {
+      const payment = await createGatewayBackedPayment('COMPLETED');
+
+      const response = await request(app)
+        .post(`/api/v1/payments/${payment.id}/refund`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(422);
+      expect(response.body.message).toMatch(/gateway payment identifier/i);
+    });
+  });
+
+  // Express 5 dejó de completar req.body con un objeto vacío cuando la request
+  // no trae cuerpo. En las rutas cuyos campos de cuerpo son todos opcionales la
+  // validación no corta nada, así que la request llega al controller y este
+  // tiene que tolerar el cuerpo ausente en vez de responder 500.
+  describe('Requests with no body on routes where every body field is optional', () => {
+    // Reembolsar sin motivo es una operación válida: reason es opcional
+    it('should refund with no request body at all', async () => {
+      const createResponse = await request(app)
+        .post('/api/v1/payments')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ amount: 80.0, appointmentId: testAppointmentId });
+
+      await request(app)
+        .post(`/api/v1/payments/${createResponse.body.data.id}/process`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ method: 'CASH' });
+
+      const response = await request(app)
+        .post(`/api/v1/payments/${createResponse.body.data.id}/refund`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.status).toBe('REFUNDED');
+    });
+
+    // Actualizar sin campos no cambia nada, pero tampoco es un error
+    it('should update with no request body at all', async () => {
+      const createResponse = await request(app)
+        .post('/api/v1/payments')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ amount: 90.0, appointmentId: testAppointmentId });
+
+      const response = await request(app)
+        .put(`/api/v1/payments/${createResponse.body.data.id}`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.amount).toBe(90.0);
+    });
+  });
+
+  // POST /api/v1/payments/:id/sync - Reconciliar contra la pasarela (Solo Admin)
+  describe('POST /api/v1/payments/:id/sync - Sync Payment (Admin Only)', () => {
+    // Debería devolver 404 si el pago no existe
+    it('should return 404 for a payment that does not exist', async () => {
+      const response = await request(app)
+        .post(`/api/v1/payments/${generateUuid()}/sync`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(404);
+    });
+
+    // La ruta nueva pasa por la misma validación de UUID que el resto
+    it('should return 400 for a malformed payment id', async () => {
+      const response = await request(app)
+        .post('/api/v1/payments/not-a-uuid/sync')
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(400);
+    });
+
+    // Debería exigir autenticación
+    it('should return 401 without a token', async () => {
+      const response = await request(app).post(`/api/v1/payments/${generateUuid()}/sync`);
+
+      expect(response.status).toBe(401);
+    });
+
+    // Es una herramienta de operación: solo ADMIN
+    it('should reject a stylist with 403', async () => {
+      const response = await request(app)
+        .post(`/api/v1/payments/${generateUuid()}/sync`)
+        .set('Authorization', `Bearer ${stylistToken}`);
+
+      expect(response.status).toBe(403);
+    });
+
+    // CLIENT tampoco
+    it('should reject a client with 403', async () => {
+      const response = await request(app)
+        .post(`/api/v1/payments/${generateUuid()}/sync`)
+        .set('Authorization', `Bearer ${userToken}`);
+
+      expect(response.status).toBe(403);
+    });
+
+    // Un pago manual no tiene estado en ningún proveedor que releer
+    it('should return 422 for a manual payment', async () => {
+      const createResponse = await request(app)
+        .post('/api/v1/payments')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ amount: 70.0, appointmentId: testAppointmentId });
+
+      const response = await request(app)
+        .post(`/api/v1/payments/${createResponse.body.data.id}/sync`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(422);
+      expect(response.body.message).toMatch(/gateway-backed/i);
+    });
+
+    // Un checkout abierto que nadie pagó no tiene nada que releer, y ese
+    // motivo tiene que distinguirse de "consulté y no cambió nada"
+    it('should return 422 for a gateway-backed payment without a gateway payment id', async () => {
+      const appointment = await createConfirmedTestAppointment({ stylistId });
+      const payment = await testPrisma.payment.create({
+        data: {
+          id: generateUuid(),
+          amount: 100,
+          status: 'PENDING',
+          appointmentId: appointment.id,
+          provider: 'MERCADO_PAGO',
+          idempotencyKey: generateUuid(),
+        },
+      });
+
+      const response = await request(app)
+        .post(`/api/v1/payments/${payment.id}/sync`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(422);
+      expect(response.body.message).toMatch(/no gateway payment identifier/i);
+    });
+
+    // En este entorno el contenedor cablea NoopPaymentGateway, cuyo getPayment
+    // devuelve null: el proveedor no reconoce el pago. No es un fallo
+    // transitorio, así que no es 502
+    it('should return 422 when the configured gateway does not recognize the payment', async () => {
+      const appointment = await createConfirmedTestAppointment({ stylistId });
+      const payment = await testPrisma.payment.create({
+        data: {
+          id: generateUuid(),
+          amount: 100,
+          status: 'PENDING',
+          appointmentId: appointment.id,
+          provider: 'MERCADO_PAGO',
+          idempotencyKey: generateUuid(),
+          gatewayPaymentId: 'MP-does-not-exist',
+        },
+      });
+
+      const response = await request(app)
+        .post(`/api/v1/payments/${payment.id}/sync`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(422);
+      expect(response.body.message).toMatch(/does not recognize/i);
+    });
+  });
 });
