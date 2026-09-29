@@ -16,6 +16,7 @@
     "prisma:studio": "prisma studio",
     "prisma:format": "prisma format",
     "prisma:generate": "prisma generate",
+    "postinstall": "node -e \"if (require('fs').existsSync('prisma/schema.prisma')) require('child_process').execSync('prisma generate', { stdio: 'inherit' })\"",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:migrate:status": "prisma migrate status",
