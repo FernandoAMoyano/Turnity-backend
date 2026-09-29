@@ -131,7 +131,7 @@ web_modules/
 .env.production.local
 .env.local
 
-# .env.production: usado por el docker-compose.yml de referencia local (F3).
+# .env.production: usado por el docker-compose.yml de referencia local.
 # Contiene secretos reales (aunque sean de prueba) -- nunca commitear.
 .env.production
 
@@ -219,16 +219,20 @@ $RECYCLE.BIN/
 # Windows shortcuts
 *.lnk
 
-# End of https://www.toptal.com/developers/gitignore/api/node,windows,linux,macoscommit_fixes.sh
+# End of https://www.toptal.com/developers/gitignore/api/node,windows,linux,macos
+commit_fixes.sh
 
 # Scripts de automatización - no incluir en repositorio
 *.sh
 # Excepcion: lo copia el Dockerfile (stage runtime) y lo necesita Render
 # para migrar antes de arrancar -- tiene que viajar en el repo.
 !docker-entrypoint.sh
-# Excepcion: smoke test para verificar el deploy (Fase 5) -- se documenta
+# Excepcion: smoke test para verificar el deploy -- se documenta
 # en el Readme, tiene que estar disponible en el repo.
 !scripts/smoke-health.sh
 # Notas de trabajo internas: planificacion, auditorias y handoffs entre
-# sesiones. Viven en el repo para tenerlas a mano, pero no se versionan.
+# sesiones. No se versionan: la copia principal vive en el Proyecto de
+# Claude, y esta carpeta es solo una copia local para tenerlas a mano. Todo
+# documento que se cree aca tiene que existir tambien en el Proyecto, porque
+# un formateo de la maquina se lo lleva sin dejar rastro.
 src/docs/notes/
