@@ -185,6 +185,23 @@ describe('HandleGatewayWebhook Use Case', () => {
       expect(savedEvent.status).toBe(GatewayEventStatusEnum.RECEIVED);
       expect(savedEvent.rawPayload).toEqual(JSON.parse(rawBody.toString('utf-8')));
     });
+
+    // Debería guardar en el payload crudo los dígitos exactos de un id fuera
+    // del rango seguro de number, en vez del valor redondeado por JSON.parse
+    it('should persist an id above Number.MAX_SAFE_INTEGER with its exact digits', async () => {
+      const largeIdBody = Buffer.from(
+        '{"action":"payment.created","api_version":"v1","data":{"id":"181041671799"},' +
+          '"date_created":"2026-10-02T18:57:36Z","id":39832227101597548,"live_mode":true,' +
+          '"type":"payment","user_id":"3734273886"}',
+      );
+
+      await handleGatewayWebhook.execute({ ...dto, rawBody: largeIdBody });
+
+      const [savedEvent] = mockEventRepository.saveIfNotExists.mock.calls[0];
+      expect(savedEvent.rawPayload).toEqual(
+        expect.objectContaining({ id: '39832227101597548', data: { id: '181041671799' } }),
+      );
+    });
   });
 
   describe('tipos de notificación fuera de alcance', () => {

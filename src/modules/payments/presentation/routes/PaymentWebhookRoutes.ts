@@ -59,8 +59,9 @@ export class PaymentWebhookRoutes {
     // en vez de parsearlo. Mercado Pago no firma el cuerpo (su manifest es
     // `id:{data.id};request-id:{x-request-id};ts:{ts};`), así que esto no es
     // un requisito del HMAC; sí lo es de las otras tres cosas: el límite
-    // acotado de arriba, el `rawPayload` byte-exacto que se persiste para
-    // auditoría y reproceso, y que el puerto `IPaymentGateway` siga siendo
+    // acotado de arriba, el `rawPayload` completo que se persiste para
+    // auditoría y reproceso (sin redondear los identificadores enteros
+    // grandes, que el parseo convierte a texto), y que el puerto `IPaymentGateway` siga siendo
     // agnóstico del proveedor (Stripe, GitHub y Shopify sí firman el cuerpo,
     // y con este diseño un adapter para ellos entra sin tocar la ruta).
     this.router.post(

@@ -11,6 +11,7 @@ import {
 } from '../../domain/gateways/IPaymentGateway';
 import { GatewayWebhookDto } from '../dto/request/GatewayWebhookDto';
 import { logger } from '../../../../shared/logger/logger';
+import { parseJsonPreservingLargeIntegers } from '../../../../shared/utils/json';
 
 /**
  * Resultado del procesamiento de una notificación de webhook
@@ -282,13 +283,18 @@ export class HandleGatewayWebhook {
    * acá (el parseo del paso 2 ya cortó), pero el fallback existe igual: un
    * `rawPayload` ilegible no puede tumbar el registro de auditoría del
    * evento, que es justamente lo que sirve para diagnosticar el problema.
+   *
+   * Se parsea con `parseJsonPreservingLargeIntegers` para que un identificador
+   * entero fuera del rango seguro de `number` (el `id` de la notificación de
+   * Mercado Pago, por ejemplo) se guarde con sus dígitos exactos, como string, en vez de
+   * redondeado.
    * @param raw - Body tal como llegó
    * @returns El payload parseado, o un objeto con el texto crudo si no se
    * puede parsear
    */
   private decodeRawPayload(raw: Buffer): unknown {
     try {
-      return JSON.parse(raw.toString('utf-8'));
+      return parseJsonPreservingLargeIntegers(raw.toString('utf-8'));
     } catch {
       return { unparsed: raw.toString('utf-8') };
     }

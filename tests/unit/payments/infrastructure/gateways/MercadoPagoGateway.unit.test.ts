@@ -523,6 +523,25 @@ describe('MercadoPagoGateway', () => {
       });
     });
 
+    // Debería conservar los dígitos exactos de un id de notificación fuera del
+    // rango seguro de number, como los que manda Mercado Pago
+    it('should keep the exact digits of a notification id above Number.MAX_SAFE_INTEGER', () => {
+      const gateway = new MercadoPagoGateway(baseConfig());
+      const raw = Buffer.from(
+        '{"action":"payment.created","api_version":"v1","data":{"id":"181041671799"},' +
+          '"date_created":"2026-10-02T18:57:36Z","id":39832227101597548,"live_mode":true,' +
+          '"type":"payment","user_id":"3734273886"}',
+      );
+
+      const notification = gateway.parseWebhookNotification(raw);
+
+      expect(notification).toEqual({
+        eventType: 'payment',
+        eventId: '39832227101597548',
+        resourceId: '181041671799',
+      });
+    });
+
     // Debería lanzar un error ante JSON inválido
     it('should throw on invalid JSON', () => {
       const gateway = new MercadoPagoGateway(baseConfig());

@@ -9,6 +9,7 @@ import {
   WebhookSignatureInput,
 } from '../../domain/gateways/IPaymentGateway';
 import { logger } from '../../../../shared/logger/logger';
+import { parseJsonPreservingLargeIntegers } from '../../../../shared/utils/json';
 
 /**
  * Configuración necesaria para instanciar el adapter
@@ -340,13 +341,18 @@ export class MercadoPagoGateway implements IPaymentGateway {
    * deduplicación en `PaymentGatewayEvent`, no confundir con el `id` del
    * pago) y `resourceId` (el `data.id`: el ID del recurso afectado, el que
    * después se re-fetchea con `getPayment`).
+   * @description Mercado Pago manda el `id` de la notificación como número
+   * JSON de 17 dígitos, fuera del rango que `number` representa sin
+   * redondeo. Por eso el body se parsea con `parseJsonPreservingLargeIntegers`
+   * y no con `JSON.parse`: un `eventId` redondeado podría hacer que dos
+   * notificaciones distintas compartan la misma clave de deduplicación.
    * @throws Error si el body no es JSON válido o le faltan `type`, `id` o
    * `data.id`.
    */
   parseWebhookNotification(raw: Buffer): GatewayNotification {
     let parsed: unknown;
     try {
-      parsed = JSON.parse(raw.toString('utf-8'));
+      parsed = parseJsonPreservingLargeIntegers(raw.toString('utf-8'));
     } catch {
       throw new Error('Malformed webhook payload: not valid JSON');
     }
