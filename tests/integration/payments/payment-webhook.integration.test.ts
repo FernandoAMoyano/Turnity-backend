@@ -19,7 +19,8 @@ const WEBHOOK_PATH = '/api/v1/payments/webhooks/mercadopago';
  * correcto. La lógica de `HandleGatewayWebhook` (incluido el camino feliz
  * `approved` -> `COMPLETED`) se prueba completa a nivel unitario con
  * `FakePaymentGateway`, mismo criterio que ya se aplicó al checkout. El
- * camino feliz por HTTP real queda para cuando haya credenciales de sandbox.
+ * camino feliz por HTTP, con el adapter real de Mercado Pago y su API
+ * simulada, se prueba en `payment-webhook-gateway.integration.test.ts`.
  *
  * **Cómo se prueba la exclusión de middleware sin poder llegar al 200.** El
  * 401 del webhook es distinguible del de `AuthMiddleware`: el del webhook
