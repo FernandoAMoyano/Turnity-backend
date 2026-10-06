@@ -45,7 +45,6 @@ function baseConfig(overrides: Partial<MercadoPagoGatewayConfig> = {}): MercadoP
     accessToken: 'TEST-1234567890-fake-access-token',
     webhookSecret: SECRET,
     currency: 'ARS',
-    publicApiUrl: 'https://api.turnity.com',
     frontendUrl: 'https://turnity.com',
     timeoutMs: 5000,
     signatureToleranceSeconds: 300,
@@ -107,9 +106,7 @@ describe('MercadoPagoGateway', () => {
       expect(body.external_reference).toBe('payment-1');
       expect(body.items[0].unit_price).toBe(1500.5);
       expect(body.items[0].currency_id).toBe('ARS');
-      expect(body.notification_url).toBe(
-        'https://api.turnity.com/api/v1/payments/webhooks/mercadopago',
-      );
+      expect(body.notification_url).toBeUndefined();
     });
 
     // Debería devolver la URL de produccion cuando el token no es de sandbox

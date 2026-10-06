@@ -108,7 +108,6 @@ jobs:
           PAYMENT_GATEWAY_PROVIDER: mercadopago
           MERCADOPAGO_ACCESS_TOKEN: TEST-ci-fake-token-not-real
           MERCADOPAGO_WEBHOOK_SECRET: ci_webhook_secret_not_real
-          PUBLIC_API_URL: http://localhost:3000
         run: |
           npx tsx src/server.ts > boot.log 2>&1 &
           SERVER_PID=$!

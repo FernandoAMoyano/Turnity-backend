@@ -107,7 +107,7 @@ const envSchema = z
       .preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('false'))
       .transform((v) => v === 'true'),
 
-    // Pasarela de pago (Mercado Pago) -- F2. 'none' mantiene el proyecto
+    // Pasarela de pago (Mercado Pago). 'none' mantiene el proyecto
     // arrancable sin credenciales (dev, CI, cualquiera que clone el repo):
     // NoopPaymentGateway rechaza checkout/refund con 422 y el webhook
     // responde 401 siempre. El superRefine de abajo exige credenciales cuando
@@ -126,9 +126,6 @@ const envSchema = z
     ),
     // Moneda de los cobros, ISO 4217 (ej. ARS, BRL, MXN).
     PAYMENT_CURRENCY: z.string().length(3).default('ARS'),
-    // URL publica de esta API, usada para armar notification_url/back_urls de
-    // la preferencia de pago. Obligatoria si PAYMENT_GATEWAY_PROVIDER=mercadopago.
-    PUBLIC_API_URL: z.preprocess((v) => (v === '' ? undefined : v), z.url().optional()),
     // Ventana de tolerancia (segundos) para el 'ts' de la firma del webhook --
     // mitiga el replay de una notificacion valida capturada.
     PAYMENT_WEBHOOK_SIGNATURE_TOLERANCE_SECONDS: z.coerce.number().int().min(30).default(300),
@@ -158,13 +155,11 @@ const envSchema = z
       }
     }
 
-    // Pasarela de pago: credenciales obligatorias solo si esta activa (§7.2 del plan).
+    // Pasarela de pago: credenciales obligatorias solo si esta activa. La URL
+    // del webhook no es una variable de la app: se configura en el panel de
+    // Mercado Pago, junto con la clave secreta, por entorno.
     if (val.PAYMENT_GATEWAY_PROVIDER === 'mercadopago') {
-      const requeridas = [
-        'MERCADOPAGO_ACCESS_TOKEN',
-        'MERCADOPAGO_WEBHOOK_SECRET',
-        'PUBLIC_API_URL',
-      ] as const;
+      const requeridas = ['MERCADOPAGO_ACCESS_TOKEN', 'MERCADOPAGO_WEBHOOK_SECRET'] as const;
       for (const key of requeridas) {
         if (!val[key]) {
           ctx.addIssue({
@@ -184,21 +179,6 @@ const envSchema = z
           message: 'MERCADOPAGO_ACCESS_TOKEN no puede empezar con TEST- en produccion',
         });
       }
-    }
-
-    // PUBLIC_API_URL debe ser https en produccion, si esta seteada (la
-    // obligatoriedad de que exista, cuando corresponde, ya la exige el bloque
-    // de arriba -- este chequeo es solo sobre el esquema).
-    if (
-      val.NODE_ENV === 'production' &&
-      val.PUBLIC_API_URL &&
-      !val.PUBLIC_API_URL.startsWith('https://')
-    ) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['PUBLIC_API_URL'],
-        message: 'PUBLIC_API_URL debe ser https:// en produccion',
-      });
     }
   });
 

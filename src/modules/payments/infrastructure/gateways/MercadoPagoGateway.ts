@@ -21,7 +21,6 @@ export interface MercadoPagoGatewayConfig {
   accessToken: string;
   webhookSecret: string;
   currency: string;
-  publicApiUrl: string;
   frontendUrl: string;
   timeoutMs: number;
   signatureToleranceSeconds: number;
@@ -96,8 +95,8 @@ export class MercadoPagoGateway implements IPaymentGateway {
   /**
    * @param config - Credenciales y parámetros ya resueltos del adapter
    * (tipo `MercadoPagoGatewayConfig`): `accessToken` y `webhookSecret` de la
-   * cuenta de Mercado Pago, `currency`/`publicApiUrl`/`frontendUrl`/
-   * `timeoutMs`/`signatureToleranceSeconds` leídos de `env` por
+   * cuenta de Mercado Pago, `currency`/`frontendUrl`/`timeoutMs`/
+   * `signatureToleranceSeconds` leídos de `env` por
    * `PaymentGatewayFactory` -- este constructor nunca lee `env` directamente,
    * por eso es testeable sin depender de la configuración global.
    * @param fetchImpl - Implementación de `fetch` a usar (tipo `typeof fetch`).
@@ -121,8 +120,15 @@ export class MercadoPagoGateway implements IPaymentGateway {
   /**
    * Crea la preferencia de checkout (Checkout Pro) en Mercado Pago
    * @description El `Payment.id` local viaja como `external_reference`, y las
-   * `back_urls`/`notification_url` se arman desde `frontendUrl`/`publicApiUrl`
-   * -- nunca desde valores hardcodeados. La preferencia vence a los 30 minutos.
+   * `back_urls` se arman desde `frontendUrl`, nunca desde valores
+   * hardcodeados. La preferencia vence a los 30 minutos.
+   *
+   * La preferencia no lleva `notification_url` a propósito. Las notificaciones
+   * se configuran en el panel de Mercado Pago (URL, eventos y clave secreta, por
+   * entorno). Con `notification_url`, Mercado Pago manda además notificaciones
+   * IPN por cada pago, que no se pueden verificar con la clave secreta: el
+   * webhook las rechaza con 401 y el proveedor las reintenta sin fin. Sin el
+   * parámetro llega solo el webhook configurado en el panel.
    * @param input - Datos para armar la preferencia (tipo `CreateCheckoutInput`,
    * declarado en `IPaymentGateway.ts`):
    * - `paymentId` (`string`): ID del `Payment` local ya persistido -- lo arma
@@ -130,7 +136,7 @@ export class MercadoPagoGateway implements IPaymentGateway {
    *   de la preferencia, así el webhook siempre puede resolver el pago
    *   aunque `gatewayPaymentId` todavía no exista.
    * - `amount` (`number`): monto a cobrar, en la unidad monetaria base (la
-   *   misma que `Payment.amount`, sin conversión a centavos -- ).
+   *   misma que `Payment.amount`, sin conversión a centavos).
    * - `description` (`string`): texto que ve el pagador en el checkout
    *   hospedado; se manda como `items[0].title`.
    * - `idempotencyKey` (`string`): clave que arma el caso de uso al crear el
@@ -155,7 +161,6 @@ export class MercadoPagoGateway implements IPaymentGateway {
         },
       ],
       external_reference: input.paymentId,
-      notification_url: `${this.config.publicApiUrl}/api/v1/payments/webhooks/mercadopago`,
       back_urls: {
         success: `${this.config.frontendUrl}/payments/success`,
         failure: `${this.config.frontendUrl}/payments/failure`,

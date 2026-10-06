@@ -209,8 +209,8 @@ describe('validateEnv', () => {
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
-    // Debería pasar con PAYMENT_GATEWAY_PROVIDER=mercadopago y las tres credenciales presentes
-    it('should pass with PAYMENT_GATEWAY_PROVIDER=mercadopago and all three credentials present', () => {
+    // Debería pasar con PAYMENT_GATEWAY_PROVIDER=mercadopago y las dos credenciales presentes
+    it('should pass with PAYMENT_GATEWAY_PROVIDER=mercadopago and both credentials present', () => {
       const result = validateEnv({
         ...validEnv,
         PAYMENT_GATEWAY_PROVIDER: 'mercadopago',
@@ -241,22 +241,18 @@ describe('validateEnv', () => {
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
-    // Debería llamar a process.exit(1) en produccion si PUBLIC_API_URL no es https
-    it('should call process.exit(1) in production if PUBLIC_API_URL is not https', () => {
-      validateEnv({
+    // Debería pasar con PAYMENT_GATEWAY_PROVIDER=mercadopago sin PUBLIC_API_URL: la
+    // URL del webhook se configura en el panel de Mercado Pago, no en la app
+    it('should pass with PAYMENT_GATEWAY_PROVIDER=mercadopago and no PUBLIC_API_URL', () => {
+      const result = validateEnv({
         ...validEnv,
-        NODE_ENV: 'production',
-        MAIL_HOST: 'smtp.turnity.com',
-        MAIL_USER: 'noreply@turnity.com',
-        MAIL_PASSWORD: 'secret',
-        MAIL_FROM: 'noreply@turnity.com',
         PAYMENT_GATEWAY_PROVIDER: 'mercadopago',
         MERCADOPAGO_ACCESS_TOKEN: 'APP_USR-1234567890abcdefgh',
         MERCADOPAGO_WEBHOOK_SECRET: 'a-secret-of-16-chars-or-more',
-        PUBLIC_API_URL: 'http://turnity-api.onrender.com',
       });
 
-      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(exitSpy).not.toHaveBeenCalled();
+      expect(result.PAYMENT_GATEWAY_PROVIDER).toBe('mercadopago');
     });
 
     // Debería pasar en produccion con un access token APP_USR- y PUBLIC_API_URL https
