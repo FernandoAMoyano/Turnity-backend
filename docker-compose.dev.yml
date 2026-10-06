@@ -11,6 +11,8 @@ services:
       POSTGRES_DB: ${DB_DATABASE}
     volumes:
       - postgres_data_dev:/var/lib/postgresql/data
+      # Crea turnity_test al inicializar el volumen (ver el propio script).
+      - ./scripts/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME}"]
       interval: 10s
@@ -54,6 +56,7 @@ services:
       - DB_PASSWORD=${DB_PASSWORD}
       - DB_DATABASE=${DB_DATABASE}
       - DATABASE_URL=${DATABASE_URL}
+      - DIRECT_URL=${DIRECT_URL}
       - TEST_DATABASE_URL=${TEST_DATABASE_URL}
 
 

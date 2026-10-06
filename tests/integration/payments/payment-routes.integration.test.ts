@@ -1,12 +1,20 @@
 import request from 'supertest';
 import app from '../../../src/app';
-import { loginAsAdmin, loginTestUser, createTestUser, createTestStylist } from '../../setup/helpers';
+import {
+  loginAsAdmin,
+  loginTestUser,
+  createTestUser,
+  createTestStylist,
+} from '../../setup/helpers';
 import { createConfirmedTestAppointment } from '../../setup/appointments-helpers';
+import { testPrisma } from '../../setup/database';
+import { generateUuid } from '../../../src/shared/utils/uuid';
 
 // Tests de integración para el módulo de Pagos
 describe('Payments Integration Tests', () => {
   let adminToken: string;
   let userToken: string;
+  let clientUserId: string;
   let stylistToken: string;
   let stylistId: string;
   let testAppointmentId: string;
@@ -19,6 +27,7 @@ describe('Payments Integration Tests', () => {
     // Login como usuario normal (cliente)
     const userData = await loginTestUser();
     userToken = userData.token;
+    clientUserId = userData.user.id;
 
     // Login como estilista
     const stylistResponse = await request(app).post('/api/v1/auth/login').send({
@@ -29,7 +38,7 @@ describe('Payments Integration Tests', () => {
     stylistId = stylistResponse.body.data.user.id;
 
     // Crear una cita de prueba confirmada para los tests de pagos, asignada
-    // explícitamente al estilista de arriba (F18: los tests de "como estilista"
+    // explícitamente al estilista de arriba (los tests de "como estilista"
     // más abajo dependen de que sea dueño real de la cita, ver ownership check)
     const appointment = await createConfirmedTestAppointment({ stylistId });
     testAppointmentId = appointment.id;
@@ -166,6 +175,212 @@ describe('Payments Integration Tests', () => {
 
       expect(response.status).toBe(400);
       expect(response.body.success).toBe(false);
+    });
+  });
+
+  // POST /api/v1/payments/checkout - Abrir checkout contra la pasarela de pago
+  // (F3 del plan de pasarela). NOTA sobre el entorno de este test: el .env de
+  // test no define PAYMENT_GATEWAY_PROVIDER, así que el default de env.ts
+  // ('none') aplica y el contenedor cablea NoopPaymentGateway
+  //  -- createCheckout() de la pasarela siempre lanza
+  // BusinessRuleError('Payment gateway is not configured') (422). Eso es
+  // justamente lo que permite probar acá toda la tubería (ownership,
+  // estado de cita, idempotencia, 409, wiring) de punta a punta salvo la
+  // llamada HTTP real a Mercado Pago: la Fase 7 (sandbox real, obligatoria
+  // según D3) es la que prueba el 201 real contra el proveedor.
+  describe('POST /api/v1/payments/checkout - Create Checkout', () => {
+    // Debería rechazar sin autenticación
+    it('should reject creation without authentication', async () => {
+      const appointment = await createConfirmedTestAppointment();
+
+      const response = await request(app).post('/api/v1/payments/checkout').send({
+        amount: 50.0,
+        appointmentId: appointment.id,
+      });
+
+      expect(response.status).toBe(401);
+      expect(response.body.success).toBe(false);
+    });
+
+    // Debería validar appointmentId requerido
+    it('should validate appointmentId is required', async () => {
+      const response = await request(app)
+        .post('/api/v1/payments/checkout')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ amount: 50.0 });
+
+      expect(response.status).toBe(400);
+      expect(response.body.success).toBe(false);
+    });
+
+    // Debería validar monto mayor a 0
+    it('should validate amount is greater than 0', async () => {
+      const appointment = await createConfirmedTestAppointment();
+
+      const response = await request(app)
+        .post('/api/v1/payments/checkout')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ amount: 0, appointmentId: appointment.id });
+
+      expect(response.status).toBe(400);
+      expect(response.body.success).toBe(false);
+    });
+
+    // Debería rechazar una Idempotency-Key que no sea un UUID válido
+    it('should validate the Idempotency-Key header when present', async () => {
+      const appointment = await createConfirmedTestAppointment();
+
+      const response = await request(app)
+        .post('/api/v1/payments/checkout')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .set('Idempotency-Key', 'not-a-uuid')
+        .send({ amount: 50.0, appointmentId: appointment.id });
+
+      expect(response.status).toBe(400);
+      expect(response.body.success).toBe(false);
+    });
+
+    // Debería devolver 404 si la cita no existe
+    it('should return 404 when appointment does not exist', async () => {
+      const response = await request(app)
+        .post('/api/v1/payments/checkout')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ amount: 50.0, appointmentId: generateUuid() });
+
+      expect(response.status).toBe(404);
+      expect(response.body.success).toBe(false);
+    });
+
+    // Debería devolver 422 si la cita no está CONFIRMED/COMPLETED
+    it('should return 422 when appointment is not CONFIRMED or COMPLETED', async () => {
+      const pendingStatus = await testPrisma.appointmentStatus.findFirst({
+        where: { name: 'PENDING' },
+      });
+      const appointment = await createConfirmedTestAppointment({
+        statusId: pendingStatus!.id,
+        confirmedAt: null,
+      });
+
+      const response = await request(app)
+        .post('/api/v1/payments/checkout')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ amount: 50.0, appointmentId: appointment.id });
+
+      expect(response.status).toBe(422);
+      expect(response.body.success).toBe(false);
+    });
+
+    // Debería rechazar a un STYLIST que no es el dueño de la cita
+    it('should reject a STYLIST who does not own the appointment', async () => {
+      const appointment = await createConfirmedTestAppointment();
+
+      const response = await request(app)
+        .post('/api/v1/payments/checkout')
+        .set('Authorization', `Bearer ${stylistToken}`)
+        .send({ amount: 50.0, appointmentId: appointment.id });
+
+      expect(response.status).toBe(403);
+      expect(response.body.success).toBe(false);
+    });
+
+    // Debería rechazar a un CLIENT que no es el dueño de la cita
+    it('should reject a CLIENT who does not own the appointment', async () => {
+      const appointment = await createConfirmedTestAppointment();
+
+      const response = await request(app)
+        .post('/api/v1/payments/checkout')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({ amount: 50.0, appointmentId: appointment.id });
+
+      expect(response.status).toBe(403);
+      expect(response.body.success).toBe(false);
+    });
+
+    // D1: CLIENT SÍ puede abrir un checkout de su propia cita -- amplía F18
+    // solo para esta ruta. Se llega hasta la pasarela (422 "not configured"
+    // en este entorno de test), lo que prueba que el ownership check pasó.
+    it('should let a CLIENT past ownership on their own appointment (D1)', async () => {
+      const appointment = await createConfirmedTestAppointment({ clientId: clientUserId });
+
+      const response = await request(app)
+        .post('/api/v1/payments/checkout')
+        .set('Authorization', `Bearer ${userToken}`)
+        .send({ amount: 50.0, appointmentId: appointment.id });
+
+      expect(response.status).toBe(422);
+      expect(response.body.code).toBe('BUSINESS_RULE_ERROR');
+    });
+
+    // Camino feliz salvo la pasarela: ADMIN, ownership y estado de cita
+    // pasan, se crea el Payment PENDING y termina FAILED cuando la pasarela
+    // (Noop en este entorno) rechaza la creación -- confirma el wiring
+    // completo de PaymentContainer y el guardado del failureReason.
+    it('should create a PENDING payment and mark it FAILED when the gateway is not configured', async () => {
+      const appointment = await createConfirmedTestAppointment();
+
+      const response = await request(app)
+        .post('/api/v1/payments/checkout')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ amount: 123.45, appointmentId: appointment.id });
+
+      expect(response.status).toBe(422);
+      expect(response.body.success).toBe(false);
+      expect(response.body.code).toBe('BUSINESS_RULE_ERROR');
+
+      const payments = await testPrisma.payment.findMany({
+        where: { appointmentId: appointment.id },
+      });
+      expect(payments).toHaveLength(1);
+      expect(payments[0].status).toBe('FAILED');
+      expect(payments[0].provider).toBe('MERCADO_PAGO');
+      expect(payments[0].failureReason).toBe('Payment gateway is not configured');
+    });
+
+    // D5: un solo checkout PENDING por cita -- 409 si ya hay uno abierto
+    // (gateway-backed) para la misma cita. Se inserta el Payment PENDING
+    // directo por Prisma porque, en este entorno sin pasarela configurada,
+    // no hay forma de dejar uno abierto pasando por el endpoint (siempre
+    // termina en FAILED, ver el test de arriba).
+    it('should return 409 when a PENDING gateway-backed checkout already exists for the appointment', async () => {
+      const appointment = await createConfirmedTestAppointment();
+
+      await testPrisma.payment.create({
+        data: {
+          id: generateUuid(),
+          amount: 100,
+          status: 'PENDING',
+          appointmentId: appointment.id,
+          provider: 'MERCADO_PAGO',
+          idempotencyKey: generateUuid(),
+        },
+      });
+
+      const response = await request(app)
+        .post('/api/v1/payments/checkout')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ amount: 50.0, appointmentId: appointment.id });
+
+      expect(response.status).toBe(409);
+      expect(response.body.success).toBe(false);
+    });
+
+    // Un pago MANUAL PENDING sobre la misma cita no debería disparar el 409:
+    // la restricción es solo sobre checkouts de pasarela abiertos.
+    it('should not conflict with a MANUAL PENDING payment on the same appointment', async () => {
+      const appointment = await createConfirmedTestAppointment();
+
+      await request(app)
+        .post('/api/v1/payments')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ amount: 100, appointmentId: appointment.id });
+
+      const response = await request(app)
+        .post('/api/v1/payments/checkout')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ amount: 50.0, appointmentId: appointment.id });
+
+      // Pasa el 409 y llega a la pasarela (Noop -> 422), en vez de 409
+      expect(response.status).toBe(422);
     });
   });
 
@@ -314,9 +529,7 @@ describe('Payments Integration Tests', () => {
 
     // Debería rechazar sin autenticación
     it('should reject without authentication', async () => {
-      const response = await request(app).get(
-        `/api/v1/payments/appointment/${testAppointmentId}`,
-      );
+      const response = await request(app).get(`/api/v1/payments/appointment/${testAppointmentId}`);
 
       expect(response.status).toBe(401);
       expect(response.body.success).toBe(false);
@@ -826,7 +1039,7 @@ describe('Payments Integration Tests', () => {
     });
   });
 
-  // Ownership en payments (F18): STYLIST solo accede a pagos de sus propias
+  // Ownership en payments: STYLIST solo accede a pagos de sus propias
   // citas; CLIENT dueño de la cita gana acceso de lectura vía
   // GET /payments/appointment/:appointmentId; ADMIN sin restricción
   describe('Ownership (F18)', () => {
@@ -858,10 +1071,12 @@ describe('Payments Integration Tests', () => {
       // CLIENT dueño de la cita
       const clientUser = await createTestUser('CLIENT');
       clientId = clientUser.user?.id || clientUser.id;
-      const clientLogin = await request(app).post('/api/v1/auth/login').send({
-        email: clientUser.user?.email || clientUser.email,
-        password: 'TestPass123!',
-      });
+      const clientLogin = await request(app)
+        .post('/api/v1/auth/login')
+        .send({
+          email: clientUser.user?.email || clientUser.email,
+          password: 'TestPass123!',
+        });
       clientToken = clientLogin.body.data.token;
 
       // Cita confirmada asignada a STYLIST A y al CLIENT de arriba
@@ -956,18 +1171,18 @@ describe('Payments Integration Tests', () => {
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
       expect(Array.isArray(response.body.data)).toBe(true);
-      expect(
-        response.body.data.some((p: any) => p.id === createResponse.body.data.id),
-      ).toBe(true);
+      expect(response.body.data.some((p: any) => p.id === createResponse.body.data.id)).toBe(true);
     });
 
     // Un CLIENT ajeno a la cita no debe poder ver sus pagos
     it('should reject an unrelated client from viewing another appointment payments', async () => {
       const otherClientUser = await createTestUser('CLIENT');
-      const otherClientLogin = await request(app).post('/api/v1/auth/login').send({
-        email: otherClientUser.user?.email || otherClientUser.email,
-        password: 'TestPass123!',
-      });
+      const otherClientLogin = await request(app)
+        .post('/api/v1/auth/login')
+        .send({
+          email: otherClientUser.user?.email || otherClientUser.email,
+          password: 'TestPass123!',
+        });
       const otherClientToken = otherClientLogin.body.data.token;
 
       const response = await request(app)
@@ -994,6 +1209,259 @@ describe('Payments Integration Tests', () => {
         .post(`/api/v1/payments/${createResponse.body.data.id}/cancel`)
         .set('Authorization', `Bearer ${adminToken}`);
       expect(cancelResponse.status).toBe(200);
+    });
+  });
+
+  // Guardas de manual contra pasarela sobre las rutas de mutación
+  describe('Gateway-backed guards on manual mutation routes', () => {
+    /**
+     * Inserta un pago respaldado por pasarela directo por Prisma. En este
+     * entorno no hay pasarela configurada, así que no hay forma de llegar a uno
+     * pasando por el endpoint de checkout (siempre termina FAILED); mismo
+     * criterio que el test de D5 más arriba en este archivo.
+     */
+    const createGatewayBackedPayment = async (status: 'PENDING' | 'COMPLETED') => {
+      const appointment = await createConfirmedTestAppointment({ stylistId });
+      return testPrisma.payment.create({
+        data: {
+          id: generateUuid(),
+          amount: 100,
+          status,
+          method: status === 'COMPLETED' ? 'ONLINE' : null,
+          paymentDate: status === 'COMPLETED' ? new Date() : null,
+          appointmentId: appointment.id,
+          provider: 'MERCADO_PAGO',
+          idempotencyKey: generateUuid(),
+        },
+      });
+    };
+
+    // Debería rechazar procesar a mano un pago de pasarela
+    it('should reject processing a gateway-backed payment with 422', async () => {
+      const payment = await createGatewayBackedPayment('PENDING');
+
+      const response = await request(app)
+        .post(`/api/v1/payments/${payment.id}/process`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ method: 'CASH' });
+
+      expect(response.status).toBe(422);
+      expect(response.body.success).toBe(false);
+
+      const stored = await testPrisma.payment.findUnique({ where: { id: payment.id } });
+      expect(stored?.status).toBe('PENDING');
+    });
+
+    // Debería rechazar cancelar a mano un pago de pasarela
+    it('should reject cancelling a gateway-backed payment with 422', async () => {
+      const payment = await createGatewayBackedPayment('PENDING');
+
+      const response = await request(app)
+        .post(`/api/v1/payments/${payment.id}/cancel`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(422);
+
+      const stored = await testPrisma.payment.findUnique({ where: { id: payment.id } });
+      expect(stored?.status).toBe('PENDING');
+    });
+
+    // Debería rechazar cambiarle el monto a un pago de pasarela
+    it('should reject updating a gateway-backed payment with 422', async () => {
+      const payment = await createGatewayBackedPayment('PENDING');
+
+      const response = await request(app)
+        .put(`/api/v1/payments/${payment.id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ amount: 250.0 });
+
+      expect(response.status).toBe(422);
+
+      const stored = await testPrisma.payment.findUnique({ where: { id: payment.id } });
+      expect(Number(stored?.amount)).toBe(100);
+    });
+
+    // Regresión: el camino manual sigue intacto de punta a punta
+    it('should still process and refund a manual payment', async () => {
+      const createResponse = await request(app)
+        .post('/api/v1/payments')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ amount: 60.0, appointmentId: testAppointmentId });
+
+      const processResponse = await request(app)
+        .post(`/api/v1/payments/${createResponse.body.data.id}/process`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ method: 'CASH' });
+      expect(processResponse.status).toBe(200);
+
+      const refundResponse = await request(app)
+        .post(`/api/v1/payments/${createResponse.body.data.id}/refund`)
+        .set('Authorization', `Bearer ${adminToken}`);
+      expect(refundResponse.status).toBe(200);
+      expect(refundResponse.body.data.status).toBe('REFUNDED');
+    });
+
+    // Sin identificador en la pasarela no hay reembolso remoto posible, y el
+    // motivo tiene que ser ese, no "solo se pueden reembolsar pagos completados"
+    it('should reject refunding a gateway-backed payment that has no gateway payment id', async () => {
+      const payment = await createGatewayBackedPayment('COMPLETED');
+
+      const response = await request(app)
+        .post(`/api/v1/payments/${payment.id}/refund`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(422);
+      expect(response.body.message).toMatch(/gateway payment identifier/i);
+    });
+  });
+
+  // Express 5 dejó de completar req.body con un objeto vacío cuando la request
+  // no trae cuerpo. En las rutas cuyos campos de cuerpo son todos opcionales la
+  // validación no corta nada, así que la request llega al controller y este
+  // tiene que tolerar el cuerpo ausente en vez de responder 500.
+  describe('Requests with no body on routes where every body field is optional', () => {
+    // Reembolsar sin motivo es una operación válida: reason es opcional
+    it('should refund with no request body at all', async () => {
+      const createResponse = await request(app)
+        .post('/api/v1/payments')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ amount: 80.0, appointmentId: testAppointmentId });
+
+      await request(app)
+        .post(`/api/v1/payments/${createResponse.body.data.id}/process`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ method: 'CASH' });
+
+      const response = await request(app)
+        .post(`/api/v1/payments/${createResponse.body.data.id}/refund`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.status).toBe('REFUNDED');
+    });
+
+    // Actualizar sin campos no cambia nada, pero tampoco es un error
+    it('should update with no request body at all', async () => {
+      const createResponse = await request(app)
+        .post('/api/v1/payments')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ amount: 90.0, appointmentId: testAppointmentId });
+
+      const response = await request(app)
+        .put(`/api/v1/payments/${createResponse.body.data.id}`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.amount).toBe(90.0);
+    });
+  });
+
+  // POST /api/v1/payments/:id/sync - Reconciliar contra la pasarela (Solo Admin)
+  describe('POST /api/v1/payments/:id/sync - Sync Payment (Admin Only)', () => {
+    // Debería devolver 404 si el pago no existe
+    it('should return 404 for a payment that does not exist', async () => {
+      const response = await request(app)
+        .post(`/api/v1/payments/${generateUuid()}/sync`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(404);
+    });
+
+    // La ruta nueva pasa por la misma validación de UUID que el resto
+    it('should return 400 for a malformed payment id', async () => {
+      const response = await request(app)
+        .post('/api/v1/payments/not-a-uuid/sync')
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(400);
+    });
+
+    // Debería exigir autenticación
+    it('should return 401 without a token', async () => {
+      const response = await request(app).post(`/api/v1/payments/${generateUuid()}/sync`);
+
+      expect(response.status).toBe(401);
+    });
+
+    // Es una herramienta de operación: solo ADMIN
+    it('should reject a stylist with 403', async () => {
+      const response = await request(app)
+        .post(`/api/v1/payments/${generateUuid()}/sync`)
+        .set('Authorization', `Bearer ${stylistToken}`);
+
+      expect(response.status).toBe(403);
+    });
+
+    // CLIENT tampoco
+    it('should reject a client with 403', async () => {
+      const response = await request(app)
+        .post(`/api/v1/payments/${generateUuid()}/sync`)
+        .set('Authorization', `Bearer ${userToken}`);
+
+      expect(response.status).toBe(403);
+    });
+
+    // Un pago manual no tiene estado en ningún proveedor que releer
+    it('should return 422 for a manual payment', async () => {
+      const createResponse = await request(app)
+        .post('/api/v1/payments')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ amount: 70.0, appointmentId: testAppointmentId });
+
+      const response = await request(app)
+        .post(`/api/v1/payments/${createResponse.body.data.id}/sync`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(422);
+      expect(response.body.message).toMatch(/gateway-backed/i);
+    });
+
+    // Un checkout abierto que nadie pagó no tiene nada que releer, y ese
+    // motivo tiene que distinguirse de "consulté y no cambió nada"
+    it('should return 422 for a gateway-backed payment without a gateway payment id', async () => {
+      const appointment = await createConfirmedTestAppointment({ stylistId });
+      const payment = await testPrisma.payment.create({
+        data: {
+          id: generateUuid(),
+          amount: 100,
+          status: 'PENDING',
+          appointmentId: appointment.id,
+          provider: 'MERCADO_PAGO',
+          idempotencyKey: generateUuid(),
+        },
+      });
+
+      const response = await request(app)
+        .post(`/api/v1/payments/${payment.id}/sync`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(422);
+      expect(response.body.message).toMatch(/no gateway payment identifier/i);
+    });
+
+    // En este entorno el contenedor cablea NoopPaymentGateway, cuyo getPayment
+    // devuelve null: el proveedor no reconoce el pago. No es un fallo
+    // transitorio, así que no es 502
+    it('should return 422 when the configured gateway does not recognize the payment', async () => {
+      const appointment = await createConfirmedTestAppointment({ stylistId });
+      const payment = await testPrisma.payment.create({
+        data: {
+          id: generateUuid(),
+          amount: 100,
+          status: 'PENDING',
+          appointmentId: appointment.id,
+          provider: 'MERCADO_PAGO',
+          idempotencyKey: generateUuid(),
+          gatewayPaymentId: 'MP-does-not-exist',
+        },
+      });
+
+      const response = await request(app)
+        .post(`/api/v1/payments/${payment.id}/sync`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(422);
+      expect(response.body.message).toMatch(/does not recognize/i);
     });
   });
 });

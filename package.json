@@ -16,6 +16,7 @@
     "prisma:studio": "prisma studio",
     "prisma:format": "prisma format",
     "prisma:generate": "prisma generate",
+    "postinstall": "node -e \"if (require('fs').existsSync('prisma/schema.prisma')) require('child_process').execSync('prisma generate', { stdio: 'inherit' })\"",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:migrate:status": "prisma migrate status",
@@ -37,7 +38,7 @@
     "docker:generate:prisma:client": "docker exec -it turnity-api-dev npx prisma generate",
     "docker:db:prisma:seed": "docker exec -it turnity-api-dev npx prisma db seed",
     "docker:db:reset": "docker exec -it turnity-api-dev npx prisma migrate reset --force",
-    "docker:prisma:test:migrate:deploy": "docker exec -it turnity-api-dev sh -c \"DATABASE_URL=$TEST_DATABASE_URL npx prisma migrate deploy\"",
+    "docker:prisma:test:migrate:deploy": "docker exec -it turnity-api-dev sh -c \"DATABASE_URL=$TEST_DATABASE_URL DIRECT_URL=$TEST_DATABASE_URL npx prisma migrate deploy\"",
     "docker:prisma:test:db:seed": "docker exec -it turnity-api-dev sh -c \"DATABASE_URL=$TEST_DATABASE_URL npx prisma db seed\"",
     "docker:build": "docker exec -it turnity-api-dev npm run build",
     "docker:jest:test": "docker exec -it turnity-api-dev npm test",
@@ -49,7 +50,6 @@
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
-    "prisma": "^6.19.3",
     "bcrypt": "^6.0.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -62,8 +62,9 @@
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.2",
-    "nodemailer": "^9.0.1",
+    "nodemailer": "^10.0.13",
     "pg": "^8.15.6",
+    "prisma": "^6.19.3",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
     "uuid": "^11.1.0",
@@ -77,12 +78,11 @@
     "@types/cors": "^2.8.18",
     "@types/express": "^5.0.1",
     "@types/helmet": "^4.0.0",
-    "@types/jest": "^29.5.14",
+    "@types/jest": "^30.0.0",
     "@types/jsonwebtoken": "^9.0.9",
     "@types/morgan": "^1.9.9",
     "@types/multer": "^1.4.12",
     "@types/node": "^22.15.17",
-    "@types/nodemailer": "^6.4.17",
     "@types/supertest": "^6.0.3",
     "@types/swagger-jsdoc": "^6.0.4",
     "@types/swagger-ui-express": "^4.1.8",
@@ -109,6 +109,9 @@
     "js-yaml": "^4.3.1",
     "@istanbuljs/load-nyc-config": {
       "js-yaml": "^3.15.1"
+    },
+    "@prisma/config": {
+      "deepmerge-ts": "^8.0.2"
     }
   }
 }

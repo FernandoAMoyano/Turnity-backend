@@ -130,7 +130,7 @@ model StylistService {
   service      Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
 
   @@unique([stylistId, serviceId])
-  
+
 }
 
 model AppointmentStatus {
@@ -232,6 +232,57 @@ model Payment {
   updatedAt     DateTime       @updatedAt
   appointmentId String
   appointment   Appointment    @relation(fields: [appointmentId], references: [id])
+
+  // Integracion con pasarela de pago. Todas las columnas de abajo son nullable
+  // o tienen default, de modo que la migracion es puramente aditiva: el codigo
+  // anterior sigue operando sobre el schema nuevo, que es lo que permite
+  // revertir la imagen en produccion sin revertir la base.
+  // provider = MANUAL representa el flujo historico donde un operador declara
+  // el estado; el default cubre todas las filas preexistentes sin backfill.
+  provider            PaymentProvider @default(MANUAL)
+  gatewayPaymentId    String?         @unique // @unique ya indexa: sin @@index aparte
+  gatewayPreferenceId String?
+  gatewayStatus       String?                 // estado crudo del proveedor, sin traducir
+  idempotencyKey      String?         @unique // evita el doble cobro ante un reintento del cliente
+  checkoutUrl         String?
+  refundedAmount      Decimal?        @db.Decimal(10, 2) // misma unidad y escala que amount
+  gatewayRefundId     String?
+  failureReason       String?
+  lastSyncedAt        DateTime?
+
+  gatewayEvents PaymentGatewayEvent[]
+
+  @@index([provider, status])
+}
+
+// Notificaciones recibidas de una pasarela de pago. La restriccion unica sobre
+// (provider, eventId) es el corazon de la idempotencia entrante: el flujo es
+// insertar primero y procesar despues, asi el UNIQUE de Postgres actua como
+// cerrojo durable y solo una instancia gana el insert aunque la API corra
+// replicada. rawPayload conserva el cuerpo tal cual llego, para auditoria y
+// para poder reprocesar sin volver a consultar al proveedor.
+model PaymentGatewayEvent {
+  id             String             @id @default(uuid())
+  provider       PaymentProvider
+  eventId        String                                  // id de la notificacion en el proveedor
+  eventType      String                                  // "payment", "merchant_order", ...
+  paymentId      String?
+  status         GatewayEventStatus @default(RECEIVED)
+  signatureValid Boolean
+  rawPayload     Json
+  error          String?
+  receivedAt     DateTime           @default(now())
+  processedAt    DateTime?
+
+  // onDelete: SetNull explicito -- es el default implicito de Prisma para esta
+  // relacion opcional, se declara siguiendo el criterio ya usado en
+  // Schedule.holiday. Preserva el rawPayload como registro de auditoria cuando
+  // se borra el pago, y mantiene funcionando el deleteMany() del seed.
+  payment Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@unique([provider, eventId])
+  @@index([paymentId])
+  @@index([status, receivedAt])
 }
 
 enum RoleName {
@@ -276,4 +327,16 @@ enum PaymentMethod {
   DEBIT_CARD
   TRANSFER
   ONLINE
+}
+
+enum PaymentProvider {
+  MANUAL
+  MERCADO_PAGO
+}
+
+enum GatewayEventStatus {
+  RECEIVED
+  PROCESSED
+  IGNORED
+  FAILED
 }

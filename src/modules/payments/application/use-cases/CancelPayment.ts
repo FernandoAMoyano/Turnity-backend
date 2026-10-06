@@ -42,6 +42,17 @@ export class CancelPayment {
 
     await this.validateAccessPermissions(payment.appointmentId, requesterId, requesterRole);
 
+    // Antes del chequeo de estado a propósito: darle de baja localmente a un
+    // checkout que sigue abierto en la pasarela dejaría el pago como fallido
+    // acá mientras el pagador todavía puede completarlo allá. Cancelar de
+    // verdad exige cancelar también la intención de cobro en el proveedor, y
+    // eso está fuera del alcance de esta versión.
+    if (payment.isGatewayBacked) {
+      throw new BusinessRuleError(
+        'Gateway-backed payments cannot be cancelled manually: the checkout is still open at the payment gateway',
+      );
+    }
+
     if (!payment.isPending) {
       throw new BusinessRuleError('Only pending payments can be cancelled');
     }

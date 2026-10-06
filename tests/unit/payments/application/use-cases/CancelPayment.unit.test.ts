@@ -1,7 +1,7 @@
 import { CancelPayment } from '../../../../../src/modules/payments/application/use-cases/CancelPayment';
 import { IPaymentRepository } from '../../../../../src/modules/payments/domain/repositories/IPaymentRepository';
 import { IAppointmentRepository } from '../../../../../src/modules/appointments/domain/repositories/IAppointmentRepository';
-import { Payment, PaymentStatusEnum, PaymentMethodEnum } from '../../../../../src/modules/payments/domain/entities/Payment';
+import { Payment, PaymentStatusEnum, PaymentMethodEnum, PaymentProviderEnum } from '../../../../../src/modules/payments/domain/entities/Payment';
 import { NotFoundError } from '../../../../../src/shared/exceptions/NotFoundError';
 import { BusinessRuleError } from '../../../../../src/shared/exceptions/BusinessRuleError';
 import { ForbiddenError } from '../../../../../src/shared/exceptions/ForbiddenError';
@@ -260,6 +260,70 @@ describe('CancelPayment Use Case', () => {
       await expect(
         cancelPayment.execute(pendingPayment.id, validStylistId, 'STYLIST'),
       ).rejects.toThrow(NotFoundError);
+    });
+  });
+
+  describe('Gateway-backed guard', () => {
+    const buildGatewayPayment = (status: PaymentStatusEnum): Payment =>
+      new Payment({
+        id: '123e4567-e89b-12d3-a456-426614174070',
+        amount: 100.0,
+        status,
+        method: status === PaymentStatusEnum.PENDING ? null : PaymentMethodEnum.ONLINE,
+        paymentDate: status === PaymentStatusEnum.PENDING ? null : new Date(),
+        appointmentId: validAppointmentId,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        provider: PaymentProviderEnum.MERCADO_PAGO,
+        idempotencyKey: 'gateway-idempotency-key',
+      });
+
+    // Dar de baja localmente un checkout que sigue abierto en la pasarela
+    // dejaría el pago fallido acá y pagable allá
+    it('should throw BusinessRuleError for a pending gateway-backed payment', async () => {
+      const payment = buildGatewayPayment(PaymentStatusEnum.PENDING);
+      mockPaymentRepository.findById.mockResolvedValue(payment);
+
+      await expect(
+        cancelPayment.execute(payment.id, adminRequesterId, adminRole),
+      ).rejects.toThrow(BusinessRuleError);
+
+      expect(mockPaymentRepository.update).not.toHaveBeenCalled();
+      expect(payment.status).toBe(PaymentStatusEnum.PENDING);
+    });
+
+    // La guarda va antes del chequeo de estado
+    it('should report the gateway reason instead of the pending-state reason for a completed gateway-backed payment', async () => {
+      const payment = buildGatewayPayment(PaymentStatusEnum.COMPLETED);
+      mockPaymentRepository.findById.mockResolvedValue(payment);
+
+      await expect(
+        cancelPayment.execute(payment.id, adminRequesterId, adminRole),
+      ).rejects.toThrow(/gateway/i);
+    });
+
+    // La guarda va después del NotFoundError
+    it('should still throw NotFoundError when the payment does not exist', async () => {
+      mockPaymentRepository.findById.mockResolvedValue(null);
+
+      await expect(
+        cancelPayment.execute(
+          '123e4567-e89b-12d3-a456-426614174071',
+          adminRequesterId,
+          adminRole,
+        ),
+      ).rejects.toThrow(NotFoundError);
+    });
+
+    // La guarda va después de la autorización
+    it('should throw ForbiddenError before the guard when the stylist does not own the appointment', async () => {
+      const payment = buildGatewayPayment(PaymentStatusEnum.PENDING);
+      mockPaymentRepository.findById.mockResolvedValue(payment);
+      mockAppointmentRepository.findById.mockResolvedValue(mockAppointment as any);
+
+      await expect(
+        cancelPayment.execute(payment.id, 'other-stylist-id', 'STYLIST'),
+      ).rejects.toThrow(ForbiddenError);
     });
   });
 });

@@ -1,6 +1,6 @@
 import { UpdatePayment } from '../../../../../src/modules/payments/application/use-cases/UpdatePayment';
 import { IPaymentRepository } from '../../../../../src/modules/payments/domain/repositories/IPaymentRepository';
-import { Payment, PaymentStatusEnum, PaymentMethodEnum } from '../../../../../src/modules/payments/domain/entities/Payment';
+import { Payment, PaymentStatusEnum, PaymentMethodEnum, PaymentProviderEnum } from '../../../../../src/modules/payments/domain/entities/Payment';
 import { NotFoundError } from '../../../../../src/shared/exceptions/NotFoundError';
 import { BusinessRuleError } from '../../../../../src/shared/exceptions/BusinessRuleError';
 
@@ -208,5 +208,63 @@ describe('UpdatePayment Use Case', () => {
     const result = await updatePayment.execute(pendingPayment.id, { amount: 99.99 });
 
     expect(result.amount).toBe(99.99);
+  });
+
+  describe('Gateway-backed guard', () => {
+    const buildGatewayPayment = (status: PaymentStatusEnum): Payment =>
+      new Payment({
+        id: '123e4567-e89b-12d3-a456-426614174080',
+        amount: 100.0,
+        status,
+        method: status === PaymentStatusEnum.PENDING ? null : PaymentMethodEnum.ONLINE,
+        paymentDate: status === PaymentStatusEnum.PENDING ? null : new Date(),
+        appointmentId: '123e4567-e89b-12d3-a456-426614174001',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        provider: PaymentProviderEnum.MERCADO_PAGO,
+        idempotencyKey: 'gateway-idempotency-key',
+      });
+
+    // El monto ya está comprometido en la pasarela: cambiarlo de este lado
+    // dejaría los dos importes distintos sin forma de reconciliarlos
+    it('should throw BusinessRuleError for a pending gateway-backed payment', async () => {
+      const payment = buildGatewayPayment(PaymentStatusEnum.PENDING);
+      mockPaymentRepository.findById.mockResolvedValue(payment);
+
+      await expect(updatePayment.execute(payment.id, { amount: 150.0 })).rejects.toThrow(
+        BusinessRuleError,
+      );
+
+      expect(mockPaymentRepository.update).not.toHaveBeenCalled();
+      expect(payment.amount).toBe(100.0);
+    });
+
+    // La guarda va antes del chequeo de estado
+    it('should report the gateway reason instead of the pending-state reason for a completed gateway-backed payment', async () => {
+      const payment = buildGatewayPayment(PaymentStatusEnum.COMPLETED);
+      mockPaymentRepository.findById.mockResolvedValue(payment);
+
+      await expect(updatePayment.execute(payment.id, { amount: 150.0 })).rejects.toThrow(
+        /gateway/i,
+      );
+    });
+
+    // La guarda va antes de la validación del monto: el monto no se puede
+    // cambiar de ninguna forma, así que discutir si es válido sobra
+    it('should reject a gateway-backed payment even when no amount is sent', async () => {
+      const payment = buildGatewayPayment(PaymentStatusEnum.PENDING);
+      mockPaymentRepository.findById.mockResolvedValue(payment);
+
+      await expect(updatePayment.execute(payment.id, {})).rejects.toThrow(/gateway/i);
+    });
+
+    // La guarda va después del NotFoundError
+    it('should still throw NotFoundError when the payment does not exist', async () => {
+      mockPaymentRepository.findById.mockResolvedValue(null);
+
+      await expect(
+        updatePayment.execute('123e4567-e89b-12d3-a456-426614174081', { amount: 150.0 }),
+      ).rejects.toThrow(NotFoundError);
+    });
   });
 });

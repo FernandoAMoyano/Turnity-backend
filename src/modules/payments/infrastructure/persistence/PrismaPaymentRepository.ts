@@ -1,16 +1,28 @@
-import { Prisma, PrismaClient, PaymentStatus, PaymentMethod } from '@prisma/client';
-import { Payment, PaymentStatusEnum, PaymentMethodEnum } from '../../domain/entities/Payment';
+import {
+  Prisma,
+  PrismaClient,
+  PaymentStatus,
+  PaymentMethod,
+  PaymentProvider,
+} from '@prisma/client';
+import {
+  Payment,
+  PaymentStatusEnum,
+  PaymentMethodEnum,
+  PaymentProviderEnum,
+} from '../../domain/entities/Payment';
 import {
   IPaymentRepository,
   PaymentFilters,
   PaginationOptions,
   PaginatedResult,
 } from '../../domain/repositories/IPaymentRepository';
+import { IPaymentGatewayLookup } from '../../domain/repositories/IPaymentGatewayLookup';
 
 /**
  * Implementación del repositorio de pagos con Prisma
  */
-export class PrismaPaymentRepository implements IPaymentRepository {
+export class PrismaPaymentRepository implements IPaymentRepository, IPaymentGatewayLookup {
   constructor(private prisma: PrismaClient) {}
 
   /**
@@ -25,6 +37,16 @@ export class PrismaPaymentRepository implements IPaymentRepository {
         method: payment.method as PaymentMethod | null,
         paymentDate: payment.paymentDate,
         appointmentId: payment.appointmentId,
+        provider: payment.provider as PaymentProvider,
+        gatewayPaymentId: payment.gatewayPaymentId,
+        gatewayPreferenceId: payment.gatewayPreferenceId,
+        gatewayStatus: payment.gatewayStatus,
+        idempotencyKey: payment.idempotencyKey,
+        checkoutUrl: payment.checkoutUrl,
+        refundedAmount: payment.refundedAmount,
+        gatewayRefundId: payment.gatewayRefundId,
+        failureReason: payment.failureReason,
+        lastSyncedAt: payment.lastSyncedAt,
       },
     });
 
@@ -51,7 +73,29 @@ export class PrismaPaymentRepository implements IPaymentRepository {
       orderBy: { createdAt: 'desc' },
     });
 
-    return data.map(item => this.toDomain(item));
+    return data.map((item) => this.toDomain(item));
+  }
+
+  /**
+   * Busca un pago por su identificador en la pasarela
+   */
+  async findByGatewayPaymentId(gatewayPaymentId: string): Promise<Payment | null> {
+    const data = await this.prisma.payment.findUnique({
+      where: { gatewayPaymentId },
+    });
+
+    return data ? this.toDomain(data) : null;
+  }
+
+  /**
+   * Busca un pago por su clave de idempotencia
+   */
+  async findByIdempotencyKey(idempotencyKey: string): Promise<Payment | null> {
+    const data = await this.prisma.payment.findUnique({
+      where: { idempotencyKey },
+    });
+
+    return data ? this.toDomain(data) : null;
   }
 
   /**
@@ -73,6 +117,10 @@ export class PrismaPaymentRepository implements IPaymentRepository {
 
     if (filters?.appointmentId) {
       where.appointmentId = filters.appointmentId;
+    }
+
+    if (filters?.provider) {
+      where.provider = filters.provider as PaymentProvider;
     }
 
     if (filters?.startDate || filters?.endDate) {
@@ -99,7 +147,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
     const totalPages = Math.ceil(total / limit);
 
     return {
-      data: data.map(item => this.toDomain(item)),
+      data: data.map((item) => this.toDomain(item)),
       total,
       page,
       limit,
@@ -111,6 +159,12 @@ export class PrismaPaymentRepository implements IPaymentRepository {
 
   /**
    * Actualiza un pago
+   * @description Los campos de pasarela se escriben con `?? null` y no con
+   * undefined: en Prisma, undefined significa "no tocar esta columna", así que
+   * un campo que la entidad limpió (por ejemplo failureReason al pasar a
+   * COMPLETED) conservaría el valor viejo en la base. `provider` e
+   * `idempotencyKey` quedan fuera a propósito: son inmutables una vez creado el
+   * pago.
    */
   async update(payment: Payment): Promise<Payment> {
     const data = await this.prisma.payment.update({
@@ -121,6 +175,14 @@ export class PrismaPaymentRepository implements IPaymentRepository {
         method: payment.method as PaymentMethod | null,
         paymentDate: payment.paymentDate,
         refundReason: payment.refundReason,
+        gatewayPaymentId: payment.gatewayPaymentId ?? null,
+        gatewayPreferenceId: payment.gatewayPreferenceId ?? null,
+        gatewayStatus: payment.gatewayStatus ?? null,
+        checkoutUrl: payment.checkoutUrl ?? null,
+        refundedAmount: payment.refundedAmount ?? null,
+        gatewayRefundId: payment.gatewayRefundId ?? null,
+        failureReason: payment.failureReason ?? null,
+        lastSyncedAt: payment.lastSyncedAt ?? null,
       },
     });
 
@@ -140,7 +202,10 @@ export class PrismaPaymentRepository implements IPaymentRepository {
   /**
    * Obtiene estadísticas de pagos
    */
-  async getStatistics(startDate: Date, endDate: Date): Promise<{
+  async getStatistics(
+    startDate: Date,
+    endDate: Date,
+  ): Promise<{
     totalRevenue: number;
     totalPayments: number;
     completedPayments: number;
@@ -158,19 +223,14 @@ export class PrismaPaymentRepository implements IPaymentRepository {
     };
 
     // Obtener conteos por estado
-    const [
-      totalPayments,
-      completedPayments,
-      pendingPayments,
-      refundedPayments,
-      failedPayments,
-    ] = await Promise.all([
-      this.prisma.payment.count({ where }),
-      this.prisma.payment.count({ where: { ...where, status: 'COMPLETED' } }),
-      this.prisma.payment.count({ where: { ...where, status: 'PENDING' } }),
-      this.prisma.payment.count({ where: { ...where, status: 'REFUNDED' } }),
-      this.prisma.payment.count({ where: { ...where, status: 'FAILED' } }),
-    ]);
+    const [totalPayments, completedPayments, pendingPayments, refundedPayments, failedPayments] =
+      await Promise.all([
+        this.prisma.payment.count({ where }),
+        this.prisma.payment.count({ where: { ...where, status: 'COMPLETED' } }),
+        this.prisma.payment.count({ where: { ...where, status: 'PENDING' } }),
+        this.prisma.payment.count({ where: { ...where, status: 'REFUNDED' } }),
+        this.prisma.payment.count({ where: { ...where, status: 'FAILED' } }),
+      ]);
 
     // Calcular ingresos totales (solo pagos completados)
     const revenueResult = await this.prisma.payment.aggregate({
@@ -190,7 +250,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
     });
 
     const paymentsByMethod: Record<string, number> = {};
-    paymentsByMethodResult.forEach(item => {
+    paymentsByMethodResult.forEach((item) => {
       if (item.method) {
         paymentsByMethod[item.method] = item._count;
       }
@@ -237,6 +297,19 @@ export class PrismaPaymentRepository implements IPaymentRepository {
       refundReason: data.refundReason ?? undefined,
       createdAt: data.createdAt,
       updatedAt: data.updatedAt,
+      provider: data.provider as PaymentProviderEnum,
+      gatewayPaymentId: data.gatewayPaymentId ?? undefined,
+      gatewayPreferenceId: data.gatewayPreferenceId ?? undefined,
+      gatewayStatus: data.gatewayStatus ?? undefined,
+      idempotencyKey: data.idempotencyKey ?? undefined,
+      checkoutUrl: data.checkoutUrl ?? undefined,
+      // Comparación explícita contra null: un reembolso de 0 es un valor
+      // legítimo y `?? undefined` sobre un Decimal 0 lo conservaría, pero
+      // Number(null) daría 0 y falsearía el dato.
+      refundedAmount: data.refundedAmount !== null ? Number(data.refundedAmount) : undefined,
+      gatewayRefundId: data.gatewayRefundId ?? undefined,
+      failureReason: data.failureReason ?? undefined,
+      lastSyncedAt: data.lastSyncedAt ?? undefined,
     });
   }
 }

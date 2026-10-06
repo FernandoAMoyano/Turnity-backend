@@ -214,8 +214,6 @@ src/modules/[module]/
 - Validación centralizada via `ValidationMiddleware` en `src/shared/middleware/`
 - Mensajes de error de API en inglés; JSDoc en español
 
-> La guía completa de convenciones está en `src/docs/SKILL.md`
-
 ---
 
 ## Documentación API

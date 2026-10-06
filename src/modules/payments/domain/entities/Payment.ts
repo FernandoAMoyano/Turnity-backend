@@ -22,6 +22,96 @@ export enum PaymentMethodEnum {
 }
 
 /**
+ * Enum para el proveedor que respalda el pago
+ * @description MANUAL representa el flujo histórico (efectivo, transferencia,
+ * tarjeta cobrada en el salón) donde un operador declara el estado. Cualquier
+ * otro valor identifica una pasarela externa que es la única fuente de verdad
+ * del estado del cobro.
+ */
+export enum PaymentProviderEnum {
+  MANUAL = 'MANUAL',
+  MERCADO_PAGO = 'MERCADO_PAGO',
+}
+
+/**
+ * Datos con los que una pasarela actualiza el estado de un pago
+ * @description El estado ya viene mapeado al dominio: la entidad nunca conoce
+ * los estados crudos del proveedor. La traducción vive en el adapter de
+ * infraestructura. `gatewayStatus` conserva el valor crudo solo como dato de
+ * auditoría, para no perder distinciones que el dominio colapsa (por ejemplo
+ * un contracargo, que se representa como REFUNDED).
+ */
+export interface ApplyGatewayStatusInput {
+  /**
+   * Estado interno destino, ya traducido desde el estado del proveedor
+   */
+  status: PaymentStatusEnum;
+
+  /**
+   * Estado crudo informado por el proveedor, tal cual llegó
+   */
+  gatewayStatus: string;
+
+  /**
+   * Identificador del pago en el proveedor, si todavía no estaba persistido
+   */
+  gatewayPaymentId?: string;
+
+  /**
+   * Motivo del rechazo informado por el proveedor
+   */
+  failureReason?: string;
+
+  /**
+   * Monto efectivamente reembolsado por el proveedor
+   */
+  refundedAmount?: number;
+
+  /**
+   * Identificador del reembolso en el proveedor
+   */
+  gatewayRefundId?: string;
+
+  /**
+   * Motivo del reembolso declarado por quien lo ordenó
+   * @description Es dato nuestro, no del proveedor: la pasarela no lo conoce.
+   * Solo se persiste cuando la transición a REFUNDED se aplica de verdad, así
+   * que un reintento sobre un pago ya reembolsado no pisa el motivo original.
+   */
+  refundReason?: string;
+}
+
+/**
+ * Resultado de aplicar un estado informado por la pasarela
+ * @description `applied` hubo cambio de estado; `noop` el estado destino ya era
+ * el actual (reintento del proveedor); `conflict` la transición es imposible y
+ * se descartó sin modificar el estado. Ninguno lanza: el webhook debe poder
+ * responder 200 en los tres casos.
+ */
+export type ApplyGatewayStatusResult = 'applied' | 'noop' | 'conflict';
+
+/**
+ * Transiciones de estado admitidas cuando la pasarela es la que informa
+ * @description Solo avanza en el sentido del dinero. REFUNDED es terminal, y
+ * ningún estado retrocede a PENDING: una notificación fuera de orden no puede
+ * deshacer un cobro ya confirmado. FAILED puede pasar a COMPLETED porque el
+ * estado se relee del proveedor, que es autoritativo: si informa que cobró, un
+ * FAILED local es un dato viejo que hay que corregir.
+ */
+const GATEWAY_ALLOWED_TRANSITIONS: Readonly<
+  Record<PaymentStatusEnum, readonly PaymentStatusEnum[]>
+> = {
+  [PaymentStatusEnum.PENDING]: [
+    PaymentStatusEnum.COMPLETED,
+    PaymentStatusEnum.FAILED,
+    PaymentStatusEnum.REFUNDED,
+  ],
+  [PaymentStatusEnum.COMPLETED]: [PaymentStatusEnum.REFUNDED],
+  [PaymentStatusEnum.FAILED]: [PaymentStatusEnum.COMPLETED, PaymentStatusEnum.REFUNDED],
+  [PaymentStatusEnum.REFUNDED]: [],
+};
+
+/**
  * Interface para las propiedades del pago
  */
 export interface PaymentProps {
@@ -34,6 +124,19 @@ export interface PaymentProps {
   refundReason?: string;
   createdAt: Date;
   updatedAt: Date;
+
+  // Integración con pasarela de pago. Todas opcionales: un pago manual no
+  // tiene ninguna de estas propiedades y `provider` toma MANUAL por defecto.
+  provider?: PaymentProviderEnum;
+  gatewayPaymentId?: string;
+  gatewayPreferenceId?: string;
+  gatewayStatus?: string;
+  idempotencyKey?: string;
+  checkoutUrl?: string;
+  refundedAmount?: number;
+  gatewayRefundId?: string;
+  failureReason?: string;
+  lastSyncedAt?: Date;
 }
 
 /**
@@ -50,6 +153,16 @@ export class Payment {
   private _refundReason?: string;
   private readonly _createdAt: Date;
   private _updatedAt: Date;
+  private readonly _provider: PaymentProviderEnum;
+  private _gatewayPaymentId?: string;
+  private _gatewayPreferenceId?: string;
+  private _gatewayStatus?: string;
+  private readonly _idempotencyKey?: string;
+  private _checkoutUrl?: string;
+  private _refundedAmount?: number;
+  private _gatewayRefundId?: string;
+  private _failureReason?: string;
+  private _lastSyncedAt?: Date;
 
   constructor(props: PaymentProps) {
     this._id = props.id;
@@ -61,6 +174,18 @@ export class Payment {
     this._refundReason = props.refundReason;
     this._createdAt = props.createdAt;
     this._updatedAt = props.updatedAt;
+    // Sin provider explícito el pago es manual: es lo que corresponde a todas
+    // las filas anteriores a la integración y al factory create().
+    this._provider = props.provider ?? PaymentProviderEnum.MANUAL;
+    this._gatewayPaymentId = props.gatewayPaymentId;
+    this._gatewayPreferenceId = props.gatewayPreferenceId;
+    this._gatewayStatus = props.gatewayStatus;
+    this._idempotencyKey = props.idempotencyKey;
+    this._checkoutUrl = props.checkoutUrl;
+    this._refundedAmount = props.refundedAmount;
+    this._gatewayRefundId = props.gatewayRefundId;
+    this._failureReason = props.failureReason;
+    this._lastSyncedAt = props.lastSyncedAt;
   }
 
   // Getters
@@ -104,6 +229,79 @@ export class Payment {
   }
 
   /**
+   * Proveedor que respalda el pago
+   */
+  get provider(): PaymentProviderEnum {
+    return this._provider;
+  }
+
+  /**
+   * Identificador del pago en la pasarela (disponible una vez que la pasarela
+   * lo informó, por webhook o por sincronización manual)
+   */
+  get gatewayPaymentId(): string | undefined {
+    return this._gatewayPaymentId;
+  }
+
+  /**
+   * Identificador de la preferencia o intención de cobro creada en la pasarela
+   */
+  get gatewayPreferenceId(): string | undefined {
+    return this._gatewayPreferenceId;
+  }
+
+  /**
+   * Estado crudo informado por la pasarela, sin traducir al dominio
+   */
+  get gatewayStatus(): string | undefined {
+    return this._gatewayStatus;
+  }
+
+  /**
+   * Clave de idempotencia usada contra la pasarela
+   * @description Es una credencial de deduplicación: no debe exponerse en
+   * ninguna respuesta de la API.
+   */
+  get idempotencyKey(): string | undefined {
+    return this._idempotencyKey;
+  }
+
+  /**
+   * URL de checkout hospedado a la que se redirige al pagador
+   */
+  get checkoutUrl(): string | undefined {
+    return this._checkoutUrl;
+  }
+
+  /**
+   * Monto efectivamente reembolsado por la pasarela
+   */
+  get refundedAmount(): number | undefined {
+    return this._refundedAmount;
+  }
+
+  /**
+   * Identificador del reembolso en la pasarela
+   */
+  get gatewayRefundId(): string | undefined {
+    return this._gatewayRefundId;
+  }
+
+  /**
+   * Motivo del rechazo informado por la pasarela
+   */
+  get failureReason(): string | undefined {
+    return this._failureReason;
+  }
+
+  /**
+   * Momento de la última relectura del estado contra la pasarela
+   */
+  get lastSyncedAt(): Date | undefined {
+    return this._lastSyncedAt;
+  }
+
+  /**
    * Verifica si el pago está completado
    */
   get isCompleted(): boolean {
@@ -132,6 +330,15 @@ export class Payment {
   }
 
   /**
+   * Verifica si el pago está respaldado por una pasarela externa
+   * @description Un pago respaldado por pasarela no puede completarse,
+   * cancelarse ni modificarse a mano: su estado lo determina el proveedor.
+   */
+  get isGatewayBacked(): boolean {
+    return this._provider !== PaymentProviderEnum.MANUAL;
+  }
+
+  /**
    * Marca el pago como completado
    * @param method - Método de pago utilizado
    */
@@ -147,12 +354,16 @@ export class Payment {
 
   /**
    * Marca el pago como fallido
+   * @param reason - Motivo del fallo (opcional). Lo usa `CreateCheckout`
+   * cuando la pasarela rechaza la creación de la preferencia; `CancelPayment`
+   * sigue sin pasarlo, así que el pago manual queda exactamente igual que antes.
    */
-  markAsFailed(): void {
+  markAsFailed(reason?: string): void {
     if (this._status !== PaymentStatusEnum.PENDING) {
       throw new Error('Only pending payments can be marked as failed');
     }
     this._status = PaymentStatusEnum.FAILED;
+    if (reason) this._failureReason = reason;
     this._updatedAt = new Date();
   }
 
@@ -185,7 +396,101 @@ export class Payment {
   }
 
   /**
+   * Aplica el estado informado por la pasarela de forma idempotente
+   * @description Es la contraparte de markAsCompleted/markAsFailed/refund para
+   * el camino automático: nunca lanza una excepción, porque la pasarela reintenta por diseño
+   * y un reintento sobre un pago ya resuelto no es un error. Los datos de
+   * auditoría (estado crudo y lastSyncedAt) se refrescan siempre, incluso
+   * cuando la transición no se aplica, para dejar registro de que se consultó.
+   * @param input - Datos de la pasarela, con el estado ya mapeado al dominio
+   * @returns 'applied' si cambió el estado, 'noop' si ya era el actual,
+   * 'conflict' si la transición es imposible
+   */
+  applyGatewayStatus(input: ApplyGatewayStatusInput): ApplyGatewayStatusResult {
+    this._gatewayStatus = input.gatewayStatus;
+    this._lastSyncedAt = new Date();
+    this._updatedAt = new Date();
+
+    if (input.gatewayPaymentId) {
+      this._gatewayPaymentId = input.gatewayPaymentId;
+    }
+    if (input.gatewayRefundId) {
+      this._gatewayRefundId = input.gatewayRefundId;
+    }
+    if (input.refundedAmount !== undefined) {
+      this._refundedAmount = input.refundedAmount;
+    }
+
+    if (input.status === this._status) {
+      return 'noop';
+    }
+
+    if (!GATEWAY_ALLOWED_TRANSITIONS[this._status].includes(input.status)) {
+      return 'conflict';
+    }
+
+    this._status = input.status;
+
+    if (input.status === PaymentStatusEnum.COMPLETED) {
+      this._method = PaymentMethodEnum.ONLINE;
+      this._paymentDate = new Date();
+      this._failureReason = undefined;
+    }
+
+    if (input.status === PaymentStatusEnum.FAILED) {
+      this._failureReason = input.failureReason;
+    }
+
+    if (input.status === PaymentStatusEnum.REFUNDED && input.refundReason) {
+      this._refundReason = input.refundReason;
+    }
+
+    return 'applied';
+  }
+
+  /**
+   * Registra un reembolso que la pasarela aceptó pero todavía no confirmó
+   * @description Hermano de `recordCheckoutCreated`: anota lo que devolvió la
+   * pasarela sin mover el estado del pago. El pago sigue COMPLETED hasta que
+   * el reembolso se confirme (por webhook o por sincronización manual), que es
+   * lo que después aplica la transición a REFUNDED. No toca `lastSyncedAt`:
+   * ese campo registra la última relectura del estado contra la pasarela, y
+   * pedir un reembolso no es una relectura.
+   * @param gatewayRefundId - Identificador del reembolso en la pasarela
+   * @param amount - Monto que la pasarela informó como reembolsado
+   * @param reason - Motivo declarado por quien ordenó el reembolso. Se guarda
+   * ya, aunque el reembolso siga sin confirmarse, para no perder el dato si
+   * después lo confirma un webhook que no lo conoce.
+   */
+  recordRefundRequested(gatewayRefundId: string, amount: number, reason?: string): void {
+    this._gatewayRefundId = gatewayRefundId;
+    this._refundedAmount = amount;
+    if (reason) this._refundReason = reason;
+    this._updatedAt = new Date();
+  }
+
+  /**
+   * Registra la intención de cobro creada en la pasarela
+   * @description Se llama después de `gateway.createCheckout()`, una vez que
+   * el pago ya fue persistido en PENDING por `createForGateway` (necesario
+   * para que el id local viaje como referencia externa hacia la pasarela).
+   * Separa esa creación del pago de la escritura de las referencias que la
+   * pasarela devuelve recién en este segundo paso.
+   * @param checkoutUrl - URL de checkout hospedado a la que se redirige al pagador
+   * @param gatewayPreferenceId - Identificador de la preferencia en la pasarela
+   */
+  recordCheckoutCreated(checkoutUrl: string, gatewayPreferenceId: string): void {
+    this._checkoutUrl = checkoutUrl;
+    this._gatewayPreferenceId = gatewayPreferenceId;
+    this._updatedAt = new Date();
+  }
+
+  /**
    * Convierte la entidad a un objeto plano
+   * @description Deliberadamente NO expone los campos de pasarela. Hoy no tiene
+   * ningún consumidor en `src/` (los DTO de respuesta se arman campo por campo
+   * en cada caso de uso), así que extenderlo no aportaría nada y filtraría
+   * idempotencyKey a cualquier consumidor futuro que lo serialice entero.
    */
   toObject(): PaymentProps {
     return {
@@ -220,6 +525,49 @@ export class Payment {
       method: null,
       paymentDate: null,
       appointmentId,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+  }
+
+  /**
+   * Factory method para crear un pago que se va a cobrar por una pasarela
+   * @description El pago nace PENDING y se persiste antes de llamar al
+   * proveedor, para que su id pueda viajar como referencia externa: así el
+   * webhook siempre resuelve el pago local aunque todavía no se haya guardado
+   * el identificador remoto.
+   * @param id - ID del pago, que se usa como referencia externa en la pasarela
+   * @param amount - Monto a cobrar, en unidad monetaria base
+   * @param appointmentId - ID de la cita asociada
+   * @param provider - Proveedor que va a procesar el cobro
+   * @param idempotencyKey - Clave de idempotencia para evitar el doble cobro
+   */
+  static createForGateway(
+    id: string,
+    amount: number,
+    appointmentId: string,
+    provider: PaymentProviderEnum,
+    idempotencyKey: string,
+  ): Payment {
+    if (amount <= 0) {
+      throw new Error('Amount must be greater than 0');
+    }
+    if (provider === PaymentProviderEnum.MANUAL) {
+      throw new Error('Gateway payments require a provider other than MANUAL');
+    }
+    if (!idempotencyKey) {
+      throw new Error('Idempotency key is required for gateway payments');
+    }
+
+    return new Payment({
+      id,
+      amount,
+      status: PaymentStatusEnum.PENDING,
+      method: null,
+      paymentDate: null,
+      appointmentId,
+      provider,
+      idempotencyKey,
       createdAt: new Date(),
       updatedAt: new Date(),
     });
