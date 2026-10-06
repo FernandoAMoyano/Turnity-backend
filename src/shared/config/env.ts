@@ -113,13 +113,17 @@ const envSchema = z
     // responde 401 siempre. El superRefine de abajo exige credenciales cuando
     // se activa 'mercadopago'.
     PAYMENT_GATEWAY_PROVIDER: z.enum(['none', 'mercadopago']).default('none'),
-    // Access token de la cuenta de Mercado Pago. Empieza con TEST- en
-    // sandbox, APP_USR- en produccion (ver isSandbox en MercadoPagoGateway).
+    // Access token de la cuenta de Mercado Pago. Las credenciales productivas y
+    // las de prueba actuales empiezan con APP_USR-; solo las de prueba
+    // anteriores empiezan con TEST- (ver isSandbox en MercadoPagoGateway).
     MERCADOPAGO_ACCESS_TOKEN: z.preprocess(
       (v) => (v === '' ? undefined : v),
       z.string().min(20).optional(),
     ),
-    // Secreto para verificar la firma x-signature de los webhooks (panel de MP).
+    // Clave secreta para verificar la firma x-signature de los webhooks, de la
+    // seccion Webhooks del panel de Mercado Pago. Con credenciales de prueba
+    // es la de la aplicacion de la cuenta vendedora de prueba (modo
+    // productivo), que es la que cobra y firma; no la de la aplicacion propia.
     MERCADOPAGO_WEBHOOK_SECRET: z.preprocess(
       (v) => (v === '' ? undefined : v),
       z.string().min(16).optional(),
@@ -170,8 +174,11 @@ const envSchema = z
         }
       }
 
-      // Nunca cobrar de verdad con credenciales de sandbox (mismo criterio
-      // que la guarda de EXPOSE_VERIFICATION_TOKENS de arriba).
+      // Rechaza en produccion las credenciales de prueba con prefijo TEST-
+      // (mismo criterio que la guarda de EXPOSE_VERIFICATION_TOKENS de
+      // arriba). No detecta las credenciales de prueba actuales, que empiezan
+      // con APP_USR- igual que las productivas: esas no tienen un prefijo
+      // propio con el cual distinguirlas.
       if (val.NODE_ENV === 'production' && val.MERCADOPAGO_ACCESS_TOKEN?.startsWith('TEST-')) {
         ctx.addIssue({
           code: 'custom',

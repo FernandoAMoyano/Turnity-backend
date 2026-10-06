@@ -61,11 +61,15 @@ interface MercadoPagoRefundResponse {
 
 /**
  * Adapter de Mercado Pago para el puerto `IPaymentGateway`
- * @description Producción y sandbox son la misma clase: el modo lo calcula
- * el getter `isSandbox` (más abajo) leyendo el prefijo del `accessToken`
- * (`TEST-` = sandbox), nunca una variable de modo aparte -- una segunda
- * fuente de verdad podría desincronizarse del token, y el modo de fallo
- * (creer que estás en sandbox cobrando de verdad) es inaceptable.
+ * @description Producción y pruebas usan la misma clase. El getter
+ * `isSandbox` (más abajo) lee el prefijo del `accessToken`, pero ese prefijo
+ * ya no distingue los dos entornos: las credenciales de prueba que Mercado
+ * Pago genera al crear una aplicación empiezan con `APP_USR-`, igual que las
+ * productivas, y pertenecen a una cuenta vendedora de prueba. Solo las
+ * credenciales de prueba anteriores empiezan con `TEST-`. Tampoco sirve
+ * `live_mode`: los pagos de la vendedora de prueba llegan con `live_mode: true`.
+ * No hay una variable de modo aparte porque no existe un dato confiable con
+ * el cual mantenerla sincronizada.
  *
  * Sin SDK: `fetch` nativo de Node 20, cero dependencias npm
  * nuevas. Cuatro endpoints: crear preferencia, re-fetchear pago, crear
@@ -111,7 +115,12 @@ export class MercadoPagoGateway implements IPaymentGateway {
   }
 
   /**
-   * Indica si el access token configurado es de sandbox (prefijo `TEST-`)
+   * Indica si el access token configurado es una credencial de prueba
+   * anterior, con prefijo `TEST-`
+   * @description Da `false` con las credenciales de prueba actuales
+   * (`APP_USR-`), y así tiene que ser: con ellas el checkout que funciona es
+   * `init_point`, no `sandbox_init_point`. Un `true` solo indica que el token
+   * es del formato viejo; un `false` no garantiza que el token sea productivo.
    */
   get isSandbox(): boolean {
     return this.config.accessToken.startsWith('TEST-');
@@ -141,8 +150,8 @@ export class MercadoPagoGateway implements IPaymentGateway {
    *   hospedado; se manda como `items[0].title`.
    * - `idempotencyKey` (`string`): clave que arma el caso de uso al crear el
    *   `Payment`; viaja como header `X-Idempotency-Key` hacia Mercado Pago.
-   * @returns `GatewayCheckout` con `checkoutUrl` (`sandbox_init_point` o
-   * `init_point` de la respuesta de MP, según `isSandbox`),
+   * @returns `GatewayCheckout` con `checkoutUrl` (`init_point` de la
+   * respuesta de MP, o `sandbox_init_point` si el token es `TEST-`),
    * `gatewayPreferenceId` (el `id` que devuelve Mercado Pago) y `expiresAt`
    * (calculado localmente: ahora + 30 minutos).
    * @throws Error si Mercado Pago responde con un status HTTP no exitoso
