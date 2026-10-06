@@ -145,6 +145,23 @@ export interface IPaymentGateway {
   getPayment(gatewayPaymentId: string): Promise<GatewayPaymentSnapshot | null>;
 
   /**
+   * Busca en la pasarela el pago asociado a una intención de cobro propia
+   * @description Sirve para reconciliar un pago cuya notificación nunca llegó:
+   * el identificador del pago en la pasarela solo se conoce a través del
+   * webhook, pero la referencia externa la define este sistema al crear el
+   * checkout. Una misma intención de cobro puede tener varios intentos de pago
+   * (por ejemplo, uno rechazado y otro aprobado después); la implementación
+   * devuelve el que representa el estado vigente.
+   * @param externalReference - Referencia externa enviada al crear el checkout
+   * (`string`): el `Payment.id` local.
+   * @returns El snapshot del pago (tipo `GatewayPaymentSnapshot`), o `null` si
+   * la pasarela no tiene ningún pago con esa referencia (nunca lanza una
+   * excepción en ese caso).
+   * @throws Error si la respuesta de la pasarela no es exitosa.
+   */
+  findPaymentByExternalReference(externalReference: string): Promise<GatewayPaymentSnapshot | null>;
+
+  /**
    * Ejecuta un reembolso contra la pasarela
    * @param gatewayPaymentId - Identificador del pago a reembolsar en la
    * pasarela (`string`); el mismo valor persistido en

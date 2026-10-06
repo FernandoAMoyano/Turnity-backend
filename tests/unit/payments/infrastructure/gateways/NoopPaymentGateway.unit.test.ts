@@ -52,4 +52,11 @@ describe('NoopPaymentGateway', () => {
 
     expect(() => gateway.parseWebhookNotification(Buffer.from('{}'))).toThrow(BusinessRuleError);
   });
+
+  // Debería devolver null al buscar por referencia externa: no hay pasarela que consultar
+  it('should return null from findPaymentByExternalReference', async () => {
+    const gateway = new NoopPaymentGateway();
+
+    await expect(gateway.findPaymentByExternalReference('payment-1')).resolves.toBeNull();
+  });
 });

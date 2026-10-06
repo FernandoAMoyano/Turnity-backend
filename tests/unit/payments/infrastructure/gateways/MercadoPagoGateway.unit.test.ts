@@ -243,6 +243,113 @@ describe('MercadoPagoGateway', () => {
     });
   });
 
+  describe('findPaymentByExternalReference', () => {
+    // Debería buscar por external_reference, ordenado por fecha descendente
+    it('should search by external_reference sorted by creation date, newest first', async () => {
+      const { fetchImpl, calls } = makeFakeFetch([
+        {
+          ok: true,
+          status: 200,
+          body: {
+            paging: { total: 1, offset: 0, limit: 0 },
+            results: [
+              {
+                id: 182696585070,
+                status: 'approved',
+                status_detail: 'accredited',
+                external_reference: 'payment-1',
+              },
+            ],
+          },
+        },
+      ]);
+      const gateway = new MercadoPagoGateway(baseConfig(), fetchImpl as unknown as typeof fetch);
+
+      const snapshot = await gateway.findPaymentByExternalReference('payment-1');
+
+      const url = new URL(calls[0].url);
+      expect(url.origin + url.pathname).toBe('https://api.mercadopago.com/v1/payments/search');
+      expect(url.searchParams.get('external_reference')).toBe('payment-1');
+      expect(url.searchParams.get('sort')).toBe('date_created');
+      expect(url.searchParams.get('criteria')).toBe('desc');
+      expect(calls[0].init.method).toBe('GET');
+      expect(snapshot).toEqual(
+        expect.objectContaining({
+          gatewayPaymentId: '182696585070',
+          status: 'approved',
+          externalReference: 'payment-1',
+        }),
+      );
+    });
+
+    // Debería preferir el intento vigente a un rechazo más reciente
+    it('should skip a newer rejected attempt and return the current payment', async () => {
+      const { fetchImpl } = makeFakeFetch([
+        {
+          ok: true,
+          status: 200,
+          body: {
+            results: [
+              { id: 3, status: 'rejected', external_reference: 'payment-1' },
+              { id: 2, status: 'approved', external_reference: 'payment-1' },
+              { id: 1, status: 'rejected', external_reference: 'payment-1' },
+            ],
+          },
+        },
+      ]);
+      const gateway = new MercadoPagoGateway(baseConfig(), fetchImpl as unknown as typeof fetch);
+
+      const snapshot = await gateway.findPaymentByExternalReference('payment-1');
+
+      expect(snapshot?.gatewayPaymentId).toBe('2');
+      expect(snapshot?.status).toBe('approved');
+    });
+
+    // Debería devolver el más reciente si todos los intentos fueron rechazados o cancelados
+    it('should return the newest attempt when every attempt was rejected or cancelled', async () => {
+      const { fetchImpl } = makeFakeFetch([
+        {
+          ok: true,
+          status: 200,
+          body: {
+            results: [
+              { id: 2, status: 'cancelled', external_reference: 'payment-1' },
+              { id: 1, status: 'rejected', external_reference: 'payment-1' },
+            ],
+          },
+        },
+      ]);
+      const gateway = new MercadoPagoGateway(baseConfig(), fetchImpl as unknown as typeof fetch);
+
+      const snapshot = await gateway.findPaymentByExternalReference('payment-1');
+
+      expect(snapshot?.gatewayPaymentId).toBe('2');
+      expect(snapshot?.status).toBe('cancelled');
+    });
+
+    // Debería devolver null si la búsqueda no trae resultados
+    it('should return null when the search has no results', async () => {
+      const { fetchImpl } = makeFakeFetch([
+        { ok: true, status: 200, body: { paging: { total: 0 }, results: [] } },
+      ]);
+      const gateway = new MercadoPagoGateway(baseConfig(), fetchImpl as unknown as typeof fetch);
+
+      const snapshot = await gateway.findPaymentByExternalReference('payment-1');
+
+      expect(snapshot).toBeNull();
+    });
+
+    // Debería lanzar un error ante una respuesta no exitosa
+    it('should throw on a non-ok response', async () => {
+      const { fetchImpl } = makeFakeFetch([
+        { ok: false, status: 401, text: '{"message":"invalid token"}' },
+      ]);
+      const gateway = new MercadoPagoGateway(baseConfig(), fetchImpl as unknown as typeof fetch);
+
+      await expect(gateway.findPaymentByExternalReference('payment-1')).rejects.toThrow(/HTTP 401/);
+    });
+  });
+
   describe('refund', () => {
     // Debería mapear un reembolso aprobado
     it('should map an approved refund', async () => {

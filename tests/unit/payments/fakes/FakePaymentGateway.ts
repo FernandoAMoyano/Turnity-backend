@@ -23,6 +23,7 @@ import {
 export class FakePaymentGateway implements IPaymentGateway {
   createCheckoutCalls: CreateCheckoutInput[] = [];
   getPaymentCalls: string[] = [];
+  findByExternalReferenceCalls: string[] = [];
   refundCalls: Array<{ gatewayPaymentId: string; idempotencyKey: string }> = [];
 
   checkoutResult: GatewayCheckout = {
@@ -35,6 +36,10 @@ export class FakePaymentGateway implements IPaymentGateway {
   /** Snapshots que `getPayment` devuelve, indexados por `gatewayPaymentId` */
   paymentSnapshots = new Map<string, GatewayPaymentSnapshot>();
   getPaymentError: Error | null = null;
+
+  /** Pagos que devuelve `findPaymentByExternalReference`, por referencia externa */
+  paymentsByExternalReference = new Map<string, GatewayPaymentSnapshot>();
+  findByExternalReferenceError: Error | null = null;
 
   refundResult: GatewayRefund = {
     gatewayRefundId: 'fake-refund-id',
@@ -85,6 +90,16 @@ export class FakePaymentGateway implements IPaymentGateway {
    * @returns `refundResult`
    * @throws `refundError` si está seteado
    */
+  async findPaymentByExternalReference(
+    externalReference: string,
+  ): Promise<GatewayPaymentSnapshot | null> {
+    this.findByExternalReferenceCalls.push(externalReference);
+    if (this.findByExternalReferenceError) {
+      throw this.findByExternalReferenceError;
+    }
+    return this.paymentsByExternalReference.get(externalReference) ?? null;
+  }
+
   async refund(gatewayPaymentId: string, idempotencyKey: string): Promise<GatewayRefund> {
     this.refundCalls.push({ gatewayPaymentId, idempotencyKey });
     if (this.refundError) {

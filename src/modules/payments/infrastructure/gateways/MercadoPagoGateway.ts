@@ -52,6 +52,19 @@ interface MercadoPagoPaymentResponse {
   };
 }
 
+/** Forma mínima de la respuesta de GET /v1/payments/search que se consume */
+interface MercadoPagoPaymentSearchResponse {
+  results?: MercadoPagoPaymentResponse[];
+}
+
+/**
+ * Estados de un pago que no representan dinero cobrado ni por cobrar
+ * @description Una intención de cobro puede acumular intentos fallidos antes
+ * del que se aprueba; al buscar por referencia externa se descartan estos si
+ * hay otro intento.
+ */
+const DISCARDED_PAYMENT_STATUSES: ReadonlySet<string> = new Set(['rejected', 'cancelled']);
+
 /** Forma mínima de la respuesta de POST /v1/payments/{id}/refunds que se consume */
 interface MercadoPagoRefundResponse {
   id: number | string;
@@ -231,6 +244,46 @@ export class MercadoPagoGateway implements IPaymentGateway {
 
     const data = (await response.json()) as MercadoPagoPaymentResponse;
     return this.toSnapshot(data);
+  }
+
+  /**
+   * Busca el pago asociado a una preferencia propia por su `external_reference`
+   * @description Usa `GET /v1/payments/search`, ordenado por fecha de creación
+   * descendente. Una preferencia puede tener varios intentos de pago; se
+   * devuelve el más reciente que no esté `rejected` ni `cancelled`, y si todos
+   * lo están, el más reciente.
+   * @param externalReference - El `Payment.id` local, que viaja como
+   * `external_reference` de la preferencia (ver `createCheckout`).
+   * @returns El `GatewayPaymentSnapshot` del pago elegido, o `null` si la
+   * búsqueda no devuelve resultados.
+   * @throws Error si la respuesta HTTP no es exitosa (ver `throwGatewayError`).
+   */
+  async findPaymentByExternalReference(
+    externalReference: string,
+  ): Promise<GatewayPaymentSnapshot | null> {
+    const url = new URL(`${MercadoPagoGateway.BASE_URL}/v1/payments/search`);
+    url.searchParams.set('external_reference', externalReference);
+    url.searchParams.set('sort', 'date_created');
+    url.searchParams.set('criteria', 'desc');
+
+    const response = await this.request(url.toString(), {
+      method: 'GET',
+      headers: this.headers(),
+    });
+
+    if (!response.ok) {
+      await this.throwGatewayError('buscando el pago por referencia externa', response);
+    }
+
+    const data = (await response.json()) as MercadoPagoPaymentSearchResponse;
+    const results = data.results ?? [];
+    if (results.length === 0) {
+      return null;
+    }
+
+    const current =
+      results.find((payment) => !DISCARDED_PAYMENT_STATUSES.has(payment.status)) ?? results[0];
+    return this.toSnapshot(current);
   }
 
   /**

@@ -232,4 +232,66 @@ describe('SyncPaymentWithGateway Use Case', () => {
     expect(result.payment.status).toBe(PaymentStatusEnum.FAILED);
     expect(result.payment.failureReason).toBe('cc_rejected_insufficient_amount');
   });
+
+  describe('sin identificador en la pasarela', () => {
+    // Debería encontrar el pago por referencia externa cuando el webhook nunca
+    // llegó, aplicarlo y guardar el identificador del proveedor
+    it('should find the payment by external reference and persist the gateway payment id', async () => {
+      const payment = buildGatewayPayment(PaymentStatusEnum.PENDING, false);
+      mockPaymentRepository.findById.mockResolvedValue(payment);
+      fakeGateway.paymentsByExternalReference.set(payment.id, {
+        gatewayPaymentId: '182696585070',
+        status: 'approved',
+        externalReference: payment.id,
+      });
+
+      const result = await syncPayment.execute(payment.id);
+
+      expect(fakeGateway.findByExternalReferenceCalls).toEqual([payment.id]);
+      expect(fakeGateway.getPaymentCalls).toHaveLength(0);
+      expect(result.changed).toBe(true);
+      expect(result.payment.status).toBe(PaymentStatusEnum.COMPLETED);
+      expect(result.payment.gatewayPaymentId).toBe('182696585070');
+      expect(result.payment.gatewayStatus).toBe('approved');
+      expect(mockPaymentRepository.update).toHaveBeenCalledTimes(1);
+    });
+
+    // Debería explicar en el error que el proveedor tampoco tiene un pago para
+    // ese checkout, sin escribir nada
+    it('should throw BusinessRuleError when the gateway has no payment for the checkout', async () => {
+      const payment = buildGatewayPayment(PaymentStatusEnum.PENDING, false);
+      mockPaymentRepository.findById.mockResolvedValue(payment);
+
+      await expect(syncPayment.execute(payment.id)).rejects.toThrow(
+        /no gateway payment identifier and the payment gateway has no payment/,
+      );
+
+      expect(fakeGateway.findByExternalReferenceCalls).toEqual([payment.id]);
+      expect(mockPaymentRepository.update).not.toHaveBeenCalled();
+    });
+
+    // Un fallo del proveedor al buscar por referencia también es 502
+    it('should fail with 502 when the gateway does not respond to the search', async () => {
+      const payment = buildGatewayPayment(PaymentStatusEnum.PENDING, false);
+      mockPaymentRepository.findById.mockResolvedValue(payment);
+      fakeGateway.findByExternalReferenceError = new Error('MercadoPago timeout');
+
+      await expect(syncPayment.execute(payment.id)).rejects.toMatchObject({ statusCode: 502 });
+
+      expect(mockPaymentRepository.update).not.toHaveBeenCalled();
+    });
+
+    // Sin pasarela configurada, la búsqueda repropaga el error original (422)
+    it('should repropagate the original error from the search when the gateway is not configured', async () => {
+      const payment = buildGatewayPayment(PaymentStatusEnum.PENDING, false);
+      mockPaymentRepository.findById.mockResolvedValue(payment);
+      fakeGateway.findByExternalReferenceError = new BusinessRuleError(
+        'Payment gateway is not configured',
+      );
+
+      await expect(syncPayment.execute(payment.id)).rejects.toMatchObject({ statusCode: 422 });
+
+      expect(mockPaymentRepository.update).not.toHaveBeenCalled();
+    });
+  });
 });

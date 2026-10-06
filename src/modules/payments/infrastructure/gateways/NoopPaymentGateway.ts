@@ -46,6 +46,18 @@ export class NoopPaymentGateway implements IPaymentGateway {
   }
 
   /**
+   * No hay pago que buscar: la pasarela no está configurada
+   * @param _externalReference - Ignorado (`string`); el parámetro existe solo
+   * para cumplir la firma del puerto `IPaymentGateway`, nunca se lee.
+   * @returns `null` siempre, por el mismo motivo que `getPayment`.
+   */
+  async findPaymentByExternalReference(
+    _externalReference: string,
+  ): Promise<GatewayPaymentSnapshot | null> {
+    return null;
+  }
+
+  /**
    * No ejecuta ningún reembolso: la pasarela no está configurada
    * @param _gatewayPaymentId - Ignorado (`string`); el parámetro existe solo
    * para cumplir la firma del puerto `IPaymentGateway`, nunca se lee.
