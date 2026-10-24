@@ -1,29 +1,47 @@
 import { generateUuid } from '../../../../shared/utils/uuid';
+import { centsToAmount } from '../../../../shared/utils/money';
 import { Payment, PaymentProviderEnum } from '../../domain/entities/Payment';
 import { IGatewayAwarePaymentRepository } from '../../domain/repositories/IPaymentGatewayLookup';
-import { IPaymentGateway } from '../../domain/gateways/IPaymentGateway';
+import { IPaymentGateway, GatewayPaymentSnapshot } from '../../domain/gateways/IPaymentGateway';
+import { PaymentStatusMapper } from '../../domain/services/PaymentStatusMapper';
+import { AppointmentPriceCalculator } from '../../domain/services/AppointmentPriceCalculator';
+import { Appointment } from '../../../appointments/domain/entities/Appointment';
 import { IAppointmentRepository } from '../../../appointments/domain/repositories/IAppointmentRepository';
 import { IAppointmentStatusRepository } from '../../../appointments/domain/repositories/IAppointmentStatusRepository';
+import { Service } from '../../../services/domain/entities/Service';
+import { IServiceRepository } from '../../../services/domain/repositories/IServiceRepository';
+import { IStylistServiceRepository } from '../../../services/domain/repositories/IStylistServiceRepository';
 import { CreateCheckoutDto } from '../dto/request/CreateCheckoutDto';
 import { CheckoutResponseDto } from '../dto/response/CheckoutResponseDto';
-import { ValidationError } from '../../../../shared/exceptions/ValidationError';
+import { translateGatewayFailure } from '../errors/translateGatewayFailure';
 import { NotFoundError } from '../../../../shared/exceptions/NotFoundError';
 import { BusinessRuleError } from '../../../../shared/exceptions/BusinessRuleError';
 import { ForbiddenError } from '../../../../shared/exceptions/ForbiddenError';
 import { ConflictError } from '../../../../shared/exceptions/ConflictError';
-import { AppError } from '../../../../shared/exceptions/AppError';
 import { logger } from '../../../../shared/logger/logger';
+
+/**
+ * Motivo con el que se cierra un checkout que venció sin pago en la pasarela
+ */
+const EXPIRED_CHECKOUT_REASON = 'Checkout expired without a payment at the payment gateway';
 
 /**
  * Caso de uso para abrir un checkout contra la pasarela de pago
  * @description Crea (o reutiliza, ante un reintento con la misma
  * `Idempotency-Key`) un `Payment` PENDING respaldado por la pasarela, y
  * devuelve la URL de checkout hospedado a la que redirigir al pagador.
- * Ownership (D1 del plan): ADMIN sin restricción, STYLIST solo si es el
- * estilista asignado, CLIENT solo si es el dueño de la cita -- mismo
- * chequeo, reutilizado tal cual, que `GetPaymentsByAppointment`. Es la única
- * mutación que CLIENT gana sobre `payments` (F18 sigue prohibiéndole el
- * resto).
+ *
+ * El monto lo calcula el servidor a partir de los servicios de la cita, al
+ * precio del estilista asignado si tiene uno propio. Nunca sale del pedido.
+ *
+ * Una cita se cobra una sola vez: no se abre un checkout si la cita ya tiene un
+ * pago completado, manual o de pasarela, ni si tiene otro checkout de pasarela
+ * abierto. Un checkout vencido deja de bloquear recién después de confirmar
+ * con la pasarela que nadie lo pagó.
+ *
+ * Permisos: ADMIN sin restricción, STYLIST solo si es el estilista asignado y
+ * CLIENT solo si es el dueño de la cita. Es la única operación de escritura
+ * sobre pagos que se le permite a CLIENT.
  */
 export class CreateCheckout {
   constructor(
@@ -31,6 +49,8 @@ export class CreateCheckout {
     private appointmentRepository: IAppointmentRepository,
     private appointmentStatusRepository: IAppointmentStatusRepository,
     private paymentGateway: IPaymentGateway,
+    private serviceRepository: IServiceRepository,
+    private stylistServiceRepository: IStylistServiceRepository,
   ) {}
 
   /**
@@ -41,21 +61,18 @@ export class CreateCheckout {
    * @returns El checkout creado (o el ya existente, si `idempotencyKey`
    * coincide con uno anterior) más un flag `created` que el controller usa
    * para elegir 201 vs 200
-   * @throws ValidationError si el monto no es válido
-   * @throws NotFoundError si la cita no existe
+   * @throws NotFoundError si la cita o alguno de sus servicios no existe
    * @throws ForbiddenError si el usuario no tiene permisos sobre la cita
-   * @throws BusinessRuleError si la cita no está en un estado válido para pagar
-   * @throws ConflictError si ya hay un checkout PENDING abierto para la cita (D5)
+   * @throws BusinessRuleError si la cita no está en un estado válido para
+   * pagar o no tiene servicios que cobrar
+   * @throws ConflictError si la cita ya está pagada o ya tiene un checkout abierto
+   * @throws AppError con status 502 si la pasarela falla
    */
   async execute(
     dto: CreateCheckoutDto,
     requesterId: string,
     requesterRole: string,
   ): Promise<{ dto: CheckoutResponseDto; created: boolean }> {
-    if (dto.amount <= 0) {
-      throw new ValidationError('Amount must be greater than 0');
-    }
-
     const appointment = await this.appointmentRepository.findById(dto.appointmentId);
     if (!appointment) {
       throw new NotFoundError('Appointment', dto.appointmentId);
@@ -73,9 +90,8 @@ export class CreateCheckout {
 
     // Idempotencia saliente: un reintento del cliente con la misma clave
     // devuelve el checkout ya creado en vez de abrir una segunda preferencia
-    // en la pasarela (evita el doble cobro por reintento de red del propio
-    // cliente, complementario al 409 de abajo que evita el doble checkout
-    // por dos acciones distintas del usuario).
+    // en la pasarela. Complementa los chequeos de cobro único, que evitan un
+    // segundo checkout por dos acciones distintas del usuario.
     let payment: Payment;
     const description = dto.description ?? `Payment for appointment ${appointment.id}`;
 
@@ -91,14 +107,14 @@ export class CreateCheckout {
         // reintenta sobre el mismo registro en vez de crear uno nuevo:
         // `idempotencyKey` es @unique en la base, así que un segundo
         // `Payment.createForGateway` con la misma clave violaría la
-        // constraint. No pasa por el chequeo 409 de abajo -- es el mismo
-        // checkout, no uno segundo.
+        // constraint. No pasa por los chequeos de cobro único ni recalcula el
+        // monto: es el mismo checkout, no uno segundo.
         payment = existing;
       } else {
-        payment = await this.createAndSaveGatewayPayment(appointment.id, dto.amount, dto.idempotencyKey);
+        payment = await this.createAndSaveGatewayPayment(appointment, dto.idempotencyKey);
       }
     } else {
-      payment = await this.createAndSaveGatewayPayment(appointment.id, dto.amount, generateUuid());
+      payment = await this.createAndSaveGatewayPayment(appointment, generateUuid());
     }
 
     try {
@@ -109,13 +125,14 @@ export class CreateCheckout {
         idempotencyKey: payment.idempotencyKey!,
       });
 
-      payment.recordCheckoutCreated(checkout.checkoutUrl, checkout.gatewayPreferenceId);
+      payment.recordCheckoutCreated(
+        checkout.checkoutUrl,
+        checkout.gatewayPreferenceId,
+        checkout.expiresAt,
+      );
       payment = await this.paymentRepository.update(payment);
 
-      return {
-        dto: this.toResponseDto(payment, checkout.expiresAt),
-        created: true,
-      };
+      return { dto: this.toResponseDto(payment), created: true };
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'Unknown gateway error';
       logger.warn('[CreateCheckout] La pasarela rechazó la creación del checkout', {
@@ -127,64 +144,37 @@ export class CreateCheckout {
       payment.markAsFailed(reason);
       await this.paymentRepository.update(payment);
 
-      // NoopPaymentGateway (§2.3 del plan) lanza BusinessRuleError(422,
-      // "Payment gateway is not configured") cuando PAYMENT_GATEWAY_PROVIDER
-      // está en 'none' -- es un error de configuración del servidor, no del
-      // proveedor externo, así que se repropaga tal cual en vez de forzar el
-      // 502 de abajo (matchea el 422 "gateway no configurado" de §5.1).
-      if (error instanceof AppError) {
-        throw error;
-      }
-
-      // MercadoPagoGateway lanza un Error plano ante un fallo real del
-      // proveedor (ver `IPaymentGateway.createCheckout`). No se agrega una
-      // excepción nueva (mismo criterio que el resto del módulo): se
-      // reutiliza AppError directamente con el código BUSINESS_RULE_ERROR
-      // que ya entiende el ErrorHandler, pero con status 502 -- es un fallo
-      // del proveedor externo, no una regla de negocio violada por el
-      // cliente de la API, así que 422 (lo que forzaría BusinessRuleError)
-      // sería engañoso.
-      throw new AppError(
-        'The payment gateway rejected the checkout creation. Please try again later.',
-        502,
-        'BUSINESS_RULE_ERROR',
-      );
+      throw translateGatewayFailure(error, {
+        retryable: 'The payment gateway rejected the checkout creation. Please try again later.',
+        rejected: 'The payment gateway rejected the checkout creation.',
+      });
     }
   }
 
   /**
-   * Valida D5 (un solo checkout PENDING por cita) y crea + persiste el
+   * Verifica que la cita pueda cobrarse, calcula el monto y crea + persiste el
    * `Payment` PENDING respaldado por la pasarela
    * @description Se persiste PENDING antes de llamar a la pasarela: el id
    * local viaja como external_reference, así que tiene que existir en la
    * base antes de que la pasarela (o un webhook adelantado) pueda
    * referenciarlo.
-   * @throws ConflictError si ya hay un checkout PENDING abierto para la cita
+   * @throws ConflictError si la cita ya está pagada o ya tiene un checkout abierto
+   * @throws NotFoundError si alguno de los servicios de la cita no existe
+   * @throws BusinessRuleError si la cita no tiene servicios que cobrar
+   * @throws AppError con status 502 si la pasarela falla al revisar un checkout vencido
    */
   private async createAndSaveGatewayPayment(
-    appointmentId: string,
-    amount: number,
+    appointment: Appointment,
     idempotencyKey: string,
   ): Promise<Payment> {
-    // D5: un solo checkout PENDING por cita. Dos preferencias abiertas a la
-    // vez sobre la misma cita son un doble cobro desde la perspectiva del
-    // cliente, aunque cada Payment sea individualmente idempotente.
-    const paymentsForAppointment = await this.paymentRepository.findByAppointmentId(
-      appointmentId,
-    );
-    const hasOpenCheckout = paymentsForAppointment.some(
-      (payment) => payment.isGatewayBacked && payment.isPending,
-    );
-    if (hasOpenCheckout) {
-      throw new ConflictError(
-        'There is already a pending checkout for this appointment. Wait for it to expire or resolve, or ask an admin to sync it.',
-      );
-    }
+    await this.ensureAppointmentIsChargeable(appointment.id);
+
+    const amount = await this.calculateAmount(appointment);
 
     const payment = Payment.createForGateway(
       generateUuid(),
       amount,
-      appointmentId,
+      appointment.id,
       PaymentProviderEnum.MERCADO_PAGO,
       idempotencyKey,
     );
@@ -193,8 +183,142 @@ export class CreateCheckout {
   }
 
   /**
+   * Verifica que la cita no esté pagada ni tenga otro checkout abierto
+   * @description Dos preferencias abiertas a la vez sobre la misma cita son un
+   * doble cobro desde la perspectiva del cliente, aunque cada pago sea
+   * individualmente idempotente. Un pago completado bloquea sea manual o de
+   * pasarela; uno reembolsado o fallido no bloquea. Un checkout de pasarela
+   * vencido se revisa contra la pasarela antes de dejar de contarlo.
+   * @throws ConflictError si la cita ya está pagada o ya tiene un checkout abierto
+   * @throws AppError con status 502 si la pasarela falla al revisar un checkout vencido
+   */
+  private async ensureAppointmentIsChargeable(appointmentId: string): Promise<void> {
+    const paymentsForAppointment = await this.paymentRepository.findByAppointmentId(appointmentId);
+
+    if (paymentsForAppointment.some((payment) => payment.isCompleted)) {
+      throw this.alreadyPaidError();
+    }
+
+    const openCheckouts = paymentsForAppointment.filter(
+      (payment) => payment.isGatewayBacked && payment.isPending,
+    );
+
+    for (const openCheckout of openCheckouts) {
+      if (!openCheckout.hasCheckoutExpired()) {
+        throw this.openCheckoutError();
+      }
+
+      await this.closeExpiredCheckout(openCheckout);
+
+      if (openCheckout.isCompleted) {
+        throw this.alreadyPaidError();
+      }
+      if (openCheckout.isPending) {
+        throw this.openCheckoutError();
+      }
+    }
+  }
+
+  /**
+   * Revisa contra la pasarela un checkout vencido y deja el pago local al día
+   * @description Que la preferencia haya vencido no garantiza que nadie la
+   * haya pagado: un pago enviado a último momento, o uno que quedó en proceso,
+   * puede existir del lado de la pasarela sin que haya llegado la
+   * notificación. Si la pasarela tiene un pago para este checkout, se aplica
+   * su estado. Si no tiene ninguno, el pago local se marca FAILED. Si después
+   * llega una aprobación tardía, el webhook todavía puede pasarlo a COMPLETED.
+   * @param payment - Pago de pasarela PENDING con el checkout vencido
+   * @throws AppError con status 502 si la pasarela falla
+   */
+  private async closeExpiredCheckout(payment: Payment): Promise<void> {
+    let snapshot: GatewayPaymentSnapshot | null;
+    try {
+      snapshot = payment.gatewayPaymentId
+        ? await this.paymentGateway.getPayment(payment.gatewayPaymentId)
+        : await this.paymentGateway.findPaymentByExternalReference(payment.id);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'Unknown gateway error';
+      logger.error('[CreateCheckout] La pasarela falló al revisar un checkout vencido', {
+        paymentId: payment.id,
+        reason,
+      });
+
+      throw translateGatewayFailure(error, {
+        retryable:
+          'The payment gateway did not respond while checking an expired checkout for this appointment. Please try again later.',
+        rejected:
+          'The payment gateway rejected the request to check an expired checkout for this appointment.',
+      });
+    }
+
+    if (snapshot) {
+      payment.applyGatewayStatus({
+        status: PaymentStatusMapper.toInternalStatus(snapshot.status),
+        gatewayStatus: snapshot.status,
+        gatewayPaymentId: snapshot.gatewayPaymentId,
+        failureReason: snapshot.statusDetail,
+        refundedAmount: snapshot.refundedAmount,
+      });
+    } else {
+      payment.markAsFailed(EXPIRED_CHECKOUT_REASON);
+    }
+
+    await this.paymentRepository.update(payment);
+
+    logger.info('[CreateCheckout] Checkout vencido revisado contra la pasarela', {
+      paymentId: payment.id,
+      gatewayStatus: snapshot?.status,
+      status: payment.status,
+    });
+  }
+
+  /**
+   * Calcula el monto a cobrar a partir de los servicios de la cita
+   * @description Usa los precios vigentes al momento del checkout. Los precios
+   * se guardan en centavos y el pago se expresa en la unidad monetaria base.
+   * @returns El monto en la unidad monetaria base
+   * @throws NotFoundError si alguno de los servicios de la cita no existe
+   * @throws BusinessRuleError si la cita no tiene servicios que cobrar
+   */
+  private async calculateAmount(appointment: Appointment): Promise<number> {
+    const services: Service[] = [];
+    for (const serviceId of appointment.serviceIds) {
+      const service = await this.serviceRepository.findById(serviceId);
+      if (!service) {
+        throw new NotFoundError('Service', serviceId);
+      }
+      services.push(service);
+    }
+
+    const stylistAssignments = appointment.stylistId
+      ? await this.stylistServiceRepository.findByStylist(appointment.stylistId)
+      : [];
+
+    const totalInCents = AppointmentPriceCalculator.totalInCents(services, stylistAssignments);
+    if (totalInCents <= 0) {
+      throw new BusinessRuleError(
+        'Cannot create a checkout for an appointment without services to charge',
+      );
+    }
+
+    return centsToAmount(totalInCents);
+  }
+
+  private alreadyPaidError(): ConflictError {
+    return new ConflictError(
+      'This appointment already has a completed payment. A new checkout cannot be opened.',
+    );
+  }
+
+  private openCheckoutError(): ConflictError {
+    return new ConflictError(
+      'There is already a pending checkout for this appointment. Wait for it to expire or resolve, or ask an admin to sync it.',
+    );
+  }
+
+  /**
    * Valida que el usuario tenga permisos para abrir un checkout sobre la
-   * cita indicada (D1: ampliación acotada de F18, solo para este endpoint)
+   * cita indicada
    * @throws ForbiddenError si STYLIST/CLIENT no son dueños de la cita
    */
   private validateAccessPermissions(
@@ -221,33 +345,18 @@ export class CreateCheckout {
     throw new ForbiddenError('You can only create a checkout for your own appointments');
   }
 
-  private toResponseDto(payment: Payment, expiresAt?: Date): CheckoutResponseDto {
+  private toResponseDto(payment: Payment): CheckoutResponseDto {
     return {
       paymentId: payment.id,
+      amount: payment.amount,
       // No-null assertion: en los dos caminos que llegan acá (checkout recién
       // creado, o reencontrado por idempotencyKey) ya se llamó a
       // recordCheckoutCreated, así que ambos campos están seteados.
       checkoutUrl: payment.checkoutUrl!,
       gatewayPreferenceId: payment.gatewayPreferenceId!,
-      // Si el pago se reencontró por idempotencyKey, no tenemos el
-      // GatewayCheckout original (Payment no persiste expiresAt, ver D6 /
-      // handoff de F2) -- se aproxima con la ventana fija del plan sobre
-      // createdAt, que es lo mismo que calculó MercadoPagoGateway al crearlo.
-      expiresAt: expiresAt ?? this.approximateExpiration(payment.createdAt),
+      expiresAt: payment.effectiveCheckoutExpiresAt,
       status: payment.status,
       provider: payment.provider,
     };
-  }
-
-  /**
-   * Aproxima el vencimiento de una preferencia ya creada, para la respuesta
-   * de idempotencia (200), a partir de la ventana fija de D6. `Payment` no
-   * persiste `expiresAt` (ver `checkout-y-vencimiento` en el handoff de F2):
-   * solo la pasarela lo sabe con certeza. Sirve para mostrarlo en la
-   * respuesta; no se usa para ninguna decisión de negocio.
-   */
-  private approximateExpiration(createdAt: Date): Date {
-    const CHECKOUT_EXPIRATION_MINUTES = 30;
-    return new Date(createdAt.getTime() + CHECKOUT_EXPIRATION_MINUTES * 60_000);
   }
 }
