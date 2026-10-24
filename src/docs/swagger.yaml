@@ -1672,6 +1672,119 @@ paths:
         '403':
           $ref: '#/components/responses/Error403'
 
+  /payments/checkout:
+    post:
+      tags: [Payments]
+      summary: Abrir un checkout contra la pasarela de pago (Admin, Stylist dueño, Client dueño)
+      description: |
+        Crea un pago PENDING respaldado por la pasarela y devuelve la URL de checkout hospedado a la que redirigir al pagador.
+
+        El monto lo calcula el servidor a partir de los servicios de la cita, al precio propio del estilista asignado si lo tiene. Un `amount` enviado en el body se ignora.
+
+        Una cita se cobra una sola vez: no se abre un checkout si ya tiene un pago completado, manual o de pasarela, ni si tiene otro checkout de pasarela abierto. Un checkout vencido deja de bloquear recién después de confirmar con la pasarela que nadie lo pagó.
+
+        Es la única operación de escritura sobre pagos permitida a un cliente, y solo sobre sus propias citas.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+            example: "8f14e45f-ceea-4e7a-9a0b-1c2d3e4f5a6b"
+          description: "Clave de idempotencia. Un reintento con la misma clave devuelve el checkout ya creado (200) en vez de abrir otro"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [appointmentId]
+              properties:
+                appointmentId:
+                  type: string
+                  format: uuid
+                  example: "123e4567-e89b-12d3-a456-426614174000"
+                  description: "ID de la cita a cobrar"
+                description:
+                  type: string
+                  maxLength: 255
+                  example: "Corte + color - Turno 2026-09-05 15:00"
+                  description: "Texto que ve el pagador en el checkout (opcional)"
+      responses:
+        '201':
+          description: Checkout creado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Checkout created successfully"
+                  data:
+                    $ref: '#/components/schemas/Checkout'
+        '200':
+          description: La Idempotency-Key ya se había usado y se devuelve el checkout existente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Checkout already existed for this idempotency key"
+                  data:
+                    $ref: '#/components/schemas/Checkout'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          description: La cita o alguno de sus servicios no existe
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: La cita ya tiene un pago completado o un checkout de pasarela abierto
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: "This appointment already has a completed payment. A new checkout cannot be opened."
+                code: "CONFLICT"
+        '422':
+          description: La cita no está confirmada ni completada, no tiene servicios que cobrar, o la pasarela no está configurada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: "Cannot create a checkout for an appointment without services to charge"
+                code: "BUSINESS_RULE_ERROR"
+        '502':
+          description: La pasarela falló, rechazó la operación o rechazó las credenciales del servidor. El pago queda FAILED con el motivo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: "The payment gateway rejected the checkout creation. Please try again later."
+                code: "BUSINESS_RULE_ERROR"
+
   /payments/statistics:
     get:
       tags: [Payments]
@@ -3137,6 +3250,42 @@ components:
           type: string
           format: date-time
           example: "2025-12-22T10:30:00.000Z"
+
+    Checkout:
+      type: object
+      properties:
+        paymentId:
+          type: string
+          format: uuid
+          example: "123e4567-e89b-12d3-a456-426614174000"
+          description: "ID del pago local creado para el checkout"
+        amount:
+          type: number
+          format: float
+          example: 85.00
+          description: "Monto a cobrar, calculado por el servidor a partir de los servicios de la cita"
+        checkoutUrl:
+          type: string
+          format: uri
+          example: "https://www.mercadopago.com.ar/checkout/v1/redirect?pref_id=123456789-abcd"
+          description: "URL de checkout hospedado a la que se redirige al pagador"
+        gatewayPreferenceId:
+          type: string
+          example: "123456789-abcd"
+          description: "Identificador de la preferencia en la pasarela"
+        expiresAt:
+          type: string
+          format: date-time
+          example: "2026-09-05T15:30:00.000Z"
+          description: "Vencimiento de la preferencia informado por la pasarela"
+        status:
+          type: string
+          enum: [PENDING]
+          example: "PENDING"
+        provider:
+          type: string
+          enum: [MERCADO_PAGO]
+          example: "MERCADO_PAGO"
 
     PaymentStatistics:
       type: object
