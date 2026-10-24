@@ -30,6 +30,18 @@ export interface MercadoPagoGatewayConfig {
 /** Vencimiento de la preferencia de checkout*/
 const CHECKOUT_EXPIRATION_MINUTES = 30;
 
+/**
+ * Tipos de pago que el checkout no ofrece
+ * @description La app cobra solo con tarjeta (crédito, débito o prepaga) o con
+ * dinero en cuenta, que se acreditan en el momento. Checkout Pro no permite
+ * enumerar los tipos aceptados, solo excluir: por eso la lista incluye también
+ * tipos que la cuenta hoy no tiene habilitados, para que la regla se siga
+ * cumpliendo si Mercado Pago los habilita. `ticket` son los pagos en efectivo
+ * (Pago Fácil, Rapipago), que pueden quedar pendientes durante días y bloquear
+ * el turno mientras tanto.
+ */
+const EXCLUDED_PAYMENT_TYPES = ['ticket', 'atm', 'bank_transfer', 'digital_currency'];
+
 /** Cantidad de reintentos ante 5xx o error de red -- nunca ante 4xx */
 const MAX_RETRIES = 1;
 
@@ -144,7 +156,8 @@ export class MercadoPagoGateway implements IPaymentGateway {
    * Crea la preferencia de checkout (Checkout Pro) en Mercado Pago
    * @description El `Payment.id` local viaja como `external_reference`, y las
    * `back_urls` se arman desde `frontendUrl`, nunca desde valores
-   * hardcodeados. La preferencia vence a los 30 minutos.
+   * hardcodeados. La preferencia vence a los 30 minutos y solo ofrece los
+   * medios de pago que no están en `EXCLUDED_PAYMENT_TYPES`.
    *
    * La preferencia no lleva `notification_url` a propósito. Las notificaciones
    * se configuran en el panel de Mercado Pago (URL, eventos y clave secreta, por
@@ -184,6 +197,9 @@ export class MercadoPagoGateway implements IPaymentGateway {
         },
       ],
       external_reference: input.paymentId,
+      payment_methods: {
+        excluded_payment_types: EXCLUDED_PAYMENT_TYPES.map((id) => ({ id })),
+      },
       back_urls: {
         success: `${this.config.frontendUrl}/payments/success`,
         failure: `${this.config.frontendUrl}/payments/failure`,
