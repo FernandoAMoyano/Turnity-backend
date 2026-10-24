@@ -245,6 +245,7 @@ model Payment {
   gatewayStatus       String?                 // estado crudo del proveedor, sin traducir
   idempotencyKey      String?         @unique // evita el doble cobro ante un reintento del cliente
   checkoutUrl         String?
+  checkoutExpiresAt   DateTime?               // vencimiento de la preferencia, informado al crearla
   refundedAmount      Decimal?        @db.Decimal(10, 2) // misma unidad y escala que amount
   gatewayRefundId     String?
   failureReason       String?

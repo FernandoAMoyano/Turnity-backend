@@ -98,6 +98,23 @@ export type ApplyGatewayStatusResult = 'applied' | 'noop' | 'conflict';
  * estado se relee del proveedor, que es autoritativo: si informa que cobró, un
  * FAILED local es un dato viejo que hay que corregir.
  */
+/**
+ * Vigencia que se asume para un checkout sin vencimiento registrado
+ * @description Cubre los pagos creados antes de que se guardara el vencimiento
+ * informado por la pasarela, y los que quedaron sin ese dato porque el proceso
+ * se cortó después de persistir el pago. Coincide con la vigencia con la que se
+ * crean las preferencias.
+ */
+const DEFAULT_CHECKOUT_EXPIRATION_MINUTES = 30;
+
+/**
+ * Margen que se espera después del vencimiento antes de dar un checkout por vencido
+ * @description Un pago enviado en el último instante de vigencia puede tardar
+ * en aparecer del lado de la pasarela. Sin este margen se podría liberar el
+ * turno mientras ese pago todavía se está procesando.
+ */
+const CHECKOUT_EXPIRATION_GRACE_MINUTES = 5;
+
 const GATEWAY_ALLOWED_TRANSITIONS: Readonly<
   Record<PaymentStatusEnum, readonly PaymentStatusEnum[]>
 > = {
@@ -133,6 +150,7 @@ export interface PaymentProps {
   gatewayStatus?: string;
   idempotencyKey?: string;
   checkoutUrl?: string;
+  checkoutExpiresAt?: Date;
   refundedAmount?: number;
   gatewayRefundId?: string;
   failureReason?: string;
@@ -159,6 +177,7 @@ export class Payment {
   private _gatewayStatus?: string;
   private readonly _idempotencyKey?: string;
   private _checkoutUrl?: string;
+  private _checkoutExpiresAt?: Date;
   private _refundedAmount?: number;
   private _gatewayRefundId?: string;
   private _failureReason?: string;
@@ -182,6 +201,7 @@ export class Payment {
     this._gatewayStatus = props.gatewayStatus;
     this._idempotencyKey = props.idempotencyKey;
     this._checkoutUrl = props.checkoutUrl;
+    this._checkoutExpiresAt = props.checkoutExpiresAt;
     this._refundedAmount = props.refundedAmount;
     this._gatewayRefundId = props.gatewayRefundId;
     this._failureReason = props.failureReason;
@@ -271,6 +291,26 @@ export class Payment {
    */
   get checkoutUrl(): string | undefined {
     return this._checkoutUrl;
+  }
+
+  /**
+   * Vencimiento de la intención de cobro, tal como lo informó la pasarela al crearla
+   */
+  get checkoutExpiresAt(): Date | undefined {
+    return this._checkoutExpiresAt;
+  }
+
+  /**
+   * Vencimiento con el que se evalúa el checkout
+   * @description Es el que informó la pasarela o, si no quedó registrado, la
+   * vigencia por defecto contada desde la creación del pago. No incluye el
+   * margen de espera que aplica `hasCheckoutExpired`.
+   */
+  get effectiveCheckoutExpiresAt(): Date {
+    return (
+      this._checkoutExpiresAt ??
+      new Date(this._createdAt.getTime() + DEFAULT_CHECKOUT_EXPIRATION_MINUTES * 60_000)
+    );
   }
 
   /**
@@ -478,11 +518,36 @@ export class Payment {
    * pasarela devuelve recién en este segundo paso.
    * @param checkoutUrl - URL de checkout hospedado a la que se redirige al pagador
    * @param gatewayPreferenceId - Identificador de la preferencia en la pasarela
+   * @param expiresAt - Vencimiento de la preferencia informado por la pasarela.
+   * Sin este dato, `effectiveCheckoutExpiresAt` usa la vigencia por defecto
+   * contada desde la creación del pago.
    */
-  recordCheckoutCreated(checkoutUrl: string, gatewayPreferenceId: string): void {
+  recordCheckoutCreated(checkoutUrl: string, gatewayPreferenceId: string, expiresAt?: Date): void {
     this._checkoutUrl = checkoutUrl;
     this._gatewayPreferenceId = gatewayPreferenceId;
+    if (expiresAt) this._checkoutExpiresAt = expiresAt;
     this._updatedAt = new Date();
+  }
+
+  /**
+   * Indica si el checkout de pasarela de este pago ya venció
+   * @description Solo un pago de pasarela PENDING tiene un checkout abierto que
+   * pueda vencer; para cualquier otro devuelve false. Se considera vencido
+   * recién cuando pasaron `effectiveCheckoutExpiresAt` y el margen de espera.
+   * Que haya vencido no significa que nadie lo haya pagado: quien lo use tiene
+   * que consultar a la pasarela antes de liberarlo.
+   * @param now - Momento contra el que se compara (por defecto, el actual)
+   * @returns true si pasaron el vencimiento y el margen de espera
+   */
+  hasCheckoutExpired(now: Date = new Date()): boolean {
+    if (!this.isGatewayBacked || !this.isPending) {
+      return false;
+    }
+
+    const deadline =
+      this.effectiveCheckoutExpiresAt.getTime() + CHECKOUT_EXPIRATION_GRACE_MINUTES * 60_000;
+
+    return now.getTime() > deadline;
   }
 
   /**

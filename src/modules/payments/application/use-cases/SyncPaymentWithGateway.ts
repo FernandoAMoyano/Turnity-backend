@@ -5,7 +5,7 @@ import { IPaymentGateway, GatewayPaymentSnapshot } from '../../domain/gateways/I
 import { PaymentResponseDto } from '../dto/response/PaymentResponseDto';
 import { NotFoundError } from '../../../../shared/exceptions/NotFoundError';
 import { BusinessRuleError } from '../../../../shared/exceptions/BusinessRuleError';
-import { AppError } from '../../../../shared/exceptions/AppError';
+import { translateGatewayFailure } from '../errors/translateGatewayFailure';
 import { logger } from '../../../../shared/logger/logger';
 
 /**
@@ -170,7 +170,7 @@ export class SyncPaymentWithGateway {
    * @param operation - Consulta a ejecutar
    * @param logContext - Identificadores que se registran si la consulta falla
    * @returns Lo que devuelve la consulta
-   * @throws AppError con status 502 si la pasarela no responde, o la excepción
+   * @throws AppError con status 502 si la pasarela falla, o la excepción
    * original si ya es un `AppError`
    */
   private async callGateway<T>(
@@ -187,17 +187,12 @@ export class SyncPaymentWithGateway {
       });
 
       // Sin pasarela configurada el fallo es de este servidor, no del
-      // proveedor externo, así que la excepción se repropaga tal cual en vez
-      // de disfrazarse de 502. Mismo criterio que el resto del módulo.
-      if (error instanceof AppError) {
-        throw error;
-      }
-
-      throw new AppError(
-        'The payment gateway did not respond. Please try again later.',
-        502,
-        'BUSINESS_RULE_ERROR',
-      );
+      // proveedor externo, y `translateGatewayFailure` lo devuelve tal cual en
+      // vez de disfrazarlo de 502. Mismo criterio que el resto del módulo.
+      throw translateGatewayFailure(error, {
+        retryable: 'The payment gateway did not respond. Please try again later.',
+        rejected: 'The payment gateway rejected the request to read the payment.',
+      });
     }
   }
 

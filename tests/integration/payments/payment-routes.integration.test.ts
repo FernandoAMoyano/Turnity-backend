@@ -7,6 +7,7 @@ import {
   createTestStylist,
 } from '../../setup/helpers';
 import { createConfirmedTestAppointment } from '../../setup/appointments-helpers';
+import { createPricedTestService, deletePricedTestServices } from '../../setup/payments-helpers';
 import { testPrisma } from '../../setup/database';
 import { generateUuid } from '../../../src/shared/utils/uuid';
 
@@ -178,17 +179,27 @@ describe('Payments Integration Tests', () => {
     });
   });
 
-  // POST /api/v1/payments/checkout - Abrir checkout contra la pasarela de pago
-  // (F3 del plan de pasarela). NOTA sobre el entorno de este test: el .env de
-  // test no define PAYMENT_GATEWAY_PROVIDER, así que el default de env.ts
-  // ('none') aplica y el contenedor cablea NoopPaymentGateway
-  //  -- createCheckout() de la pasarela siempre lanza
-  // BusinessRuleError('Payment gateway is not configured') (422). Eso es
-  // justamente lo que permite probar acá toda la tubería (ownership,
+  // POST /api/v1/payments/checkout - Abrir checkout contra la pasarela de pago.
+  // NOTA sobre el entorno de este test: el .env de test no define
+  // PAYMENT_GATEWAY_PROVIDER, así que el default de env.ts ('none') aplica y
+  // el contenedor cablea NoopPaymentGateway -- createCheckout() de la pasarela
+  // siempre lanza BusinessRuleError('Payment gateway is not configured') (422).
+  // Eso es justamente lo que permite probar acá toda la tubería (ownership,
   // estado de cita, idempotencia, 409, wiring) de punta a punta salvo la
-  // llamada HTTP real a Mercado Pago: la Fase 7 (sandbox real, obligatoria
-  // según D3) es la que prueba el 201 real contra el proveedor.
+  // llamada HTTP real a Mercado Pago, que queda fuera de la suite.
   describe('POST /api/v1/payments/checkout - Create Checkout', () => {
+    // El monto del checkout sale de los servicios de la cita: los tests que
+    // llegan hasta la pasarela necesitan una cita con un servicio con precio.
+    let pricedServiceId: string;
+
+    beforeAll(async () => {
+      pricedServiceId = await createPricedTestService(5000);
+    });
+
+    afterAll(async () => {
+      await deletePricedTestServices([pricedServiceId]);
+    });
+
     // Debería rechazar sin autenticación
     it('should reject creation without authentication', async () => {
       const appointment = await createConfirmedTestAppointment();
@@ -208,19 +219,6 @@ describe('Payments Integration Tests', () => {
         .post('/api/v1/payments/checkout')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ amount: 50.0 });
-
-      expect(response.status).toBe(400);
-      expect(response.body.success).toBe(false);
-    });
-
-    // Debería validar monto mayor a 0
-    it('should validate amount is greater than 0', async () => {
-      const appointment = await createConfirmedTestAppointment();
-
-      const response = await request(app)
-        .post('/api/v1/payments/checkout')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({ amount: 0, appointmentId: appointment.id });
 
       expect(response.status).toBe(400);
       expect(response.body.success).toBe(false);
@@ -296,11 +294,15 @@ describe('Payments Integration Tests', () => {
       expect(response.body.success).toBe(false);
     });
 
-    // D1: CLIENT SÍ puede abrir un checkout de su propia cita -- amplía F18
-    // solo para esta ruta. Se llega hasta la pasarela (422 "not configured"
-    // en este entorno de test), lo que prueba que el ownership check pasó.
-    it('should let a CLIENT past ownership on their own appointment (D1)', async () => {
-      const appointment = await createConfirmedTestAppointment({ clientId: clientUserId });
+    // CLIENT sí puede abrir un checkout de su propia cita: es la única
+    // escritura sobre pagos que se le permite. Se llega hasta la pasarela (422
+    // "not configured" en este entorno de test), lo que prueba que el
+    // ownership check pasó.
+    it('should let a CLIENT past ownership on their own appointment', async () => {
+      const appointment = await createConfirmedTestAppointment({
+        clientId: clientUserId,
+        serviceIds: [pricedServiceId],
+      });
 
       const response = await request(app)
         .post('/api/v1/payments/checkout')
@@ -316,7 +318,7 @@ describe('Payments Integration Tests', () => {
     // (Noop en este entorno) rechaza la creación -- confirma el wiring
     // completo de PaymentContainer y el guardado del failureReason.
     it('should create a PENDING payment and mark it FAILED when the gateway is not configured', async () => {
-      const appointment = await createConfirmedTestAppointment();
+      const appointment = await createConfirmedTestAppointment({ serviceIds: [pricedServiceId] });
 
       const response = await request(app)
         .post('/api/v1/payments/checkout')
@@ -336,7 +338,7 @@ describe('Payments Integration Tests', () => {
       expect(payments[0].failureReason).toBe('Payment gateway is not configured');
     });
 
-    // D5: un solo checkout PENDING por cita -- 409 si ya hay uno abierto
+    // Un solo checkout PENDING por cita: 409 si ya hay uno abierto
     // (gateway-backed) para la misma cita. Se inserta el Payment PENDING
     // directo por Prisma porque, en este entorno sin pasarela configurada,
     // no hay forma de dejar uno abierto pasando por el endpoint (siempre
@@ -367,7 +369,7 @@ describe('Payments Integration Tests', () => {
     // Un pago MANUAL PENDING sobre la misma cita no debería disparar el 409:
     // la restricción es solo sobre checkouts de pasarela abiertos.
     it('should not conflict with a MANUAL PENDING payment on the same appointment', async () => {
-      const appointment = await createConfirmedTestAppointment();
+      const appointment = await createConfirmedTestAppointment({ serviceIds: [pricedServiceId] });
 
       await request(app)
         .post('/api/v1/payments')
@@ -1042,7 +1044,7 @@ describe('Payments Integration Tests', () => {
   // Ownership en payments: STYLIST solo accede a pagos de sus propias
   // citas; CLIENT dueño de la cita gana acceso de lectura vía
   // GET /payments/appointment/:appointmentId; ADMIN sin restricción
-  describe('Ownership (F18)', () => {
+  describe('Ownership', () => {
     let stylistAToken: string;
     let stylistAId: string;
     let stylistBToken: string;
@@ -1157,7 +1159,7 @@ describe('Payments Integration Tests', () => {
       expect(response.body.data.status).toBe('COMPLETED');
     });
 
-    // El CLIENT dueño de la cita gana acceso de lectura a sus pagos (F18, alcance b)
+    // El CLIENT dueño de la cita gana acceso de lectura a sus pagos
     it('should allow the owning client to view payments via GET /payments/appointment/:appointmentId', async () => {
       const createResponse = await request(app)
         .post('/api/v1/payments')
@@ -1218,7 +1220,8 @@ describe('Payments Integration Tests', () => {
      * Inserta un pago respaldado por pasarela directo por Prisma. En este
      * entorno no hay pasarela configurada, así que no hay forma de llegar a uno
      * pasando por el endpoint de checkout (siempre termina FAILED); mismo
-     * criterio que el test de D5 más arriba en este archivo.
+     * criterio que el test del 409 por checkout abierto, más arriba en este
+     * archivo.
      */
     const createGatewayBackedPayment = async (status: 'PENDING' | 'COMPLETED') => {
       const appointment = await createConfirmedTestAppointment({ stylistId });

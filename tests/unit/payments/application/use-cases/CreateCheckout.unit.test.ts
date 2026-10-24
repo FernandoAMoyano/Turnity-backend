@@ -2,6 +2,9 @@ import { CreateCheckout } from '../../../../../src/modules/payments/application/
 import { IGatewayAwarePaymentRepository } from '../../../../../src/modules/payments/domain/repositories/IPaymentGatewayLookup';
 import { IAppointmentRepository } from '../../../../../src/modules/appointments/domain/repositories/IAppointmentRepository';
 import { IAppointmentStatusRepository } from '../../../../../src/modules/appointments/domain/repositories/IAppointmentStatusRepository';
+import { IServiceRepository } from '../../../../../src/modules/services/domain/repositories/IServiceRepository';
+import { IStylistServiceRepository } from '../../../../../src/modules/services/domain/repositories/IStylistServiceRepository';
+import { Service } from '../../../../../src/modules/services/domain/entities/Service';
 import { FakePaymentGateway } from '../../fakes/FakePaymentGateway';
 import {
   Payment,
@@ -12,7 +15,6 @@ import { NotFoundError } from '../../../../../src/shared/exceptions/NotFoundErro
 import { BusinessRuleError } from '../../../../../src/shared/exceptions/BusinessRuleError';
 import { ForbiddenError } from '../../../../../src/shared/exceptions/ForbiddenError';
 import { ConflictError } from '../../../../../src/shared/exceptions/ConflictError';
-import { ValidationError } from '../../../../../src/shared/exceptions/ValidationError';
 import { AppError } from '../../../../../src/shared/exceptions/AppError';
 
 describe('CreateCheckout Use Case', () => {
@@ -20,6 +22,8 @@ describe('CreateCheckout Use Case', () => {
   let mockPaymentRepository: jest.Mocked<IGatewayAwarePaymentRepository>;
   let mockAppointmentRepository: jest.Mocked<IAppointmentRepository>;
   let mockAppointmentStatusRepository: jest.Mocked<IAppointmentStatusRepository>;
+  let mockServiceRepository: jest.Mocked<IServiceRepository>;
+  let mockStylistServiceRepository: jest.Mocked<IStylistServiceRepository>;
   let fakeGateway: FakePaymentGateway;
 
   const validAppointmentId = '123e4567-e89b-12d3-a456-426614174001';
@@ -29,12 +33,23 @@ describe('CreateCheckout Use Case', () => {
   const validUserId = '123e4567-e89b-12d3-a456-426614174012';
   const otherPersonId = '123e4567-e89b-12d3-a456-426614174099';
 
+  const mockService = new Service(
+    '123e4567-e89b-12d3-a456-426614174020',
+    '123e4567-e89b-12d3-a456-426614174021',
+    'Corte',
+    'Corte de pelo',
+    30,
+    0,
+    150050,
+  );
+
   const mockAppointment = {
     id: validAppointmentId,
     statusId: validStatusId,
     stylistId: validStylistId,
     clientId: validClientId,
     userId: validUserId,
+    serviceIds: [mockService.id],
   };
 
   const mockConfirmedStatus = { id: validStatusId, name: 'CONFIRMED', description: '' };
@@ -61,8 +76,36 @@ describe('CreateCheckout Use Case', () => {
       findById: jest.fn(),
     } as unknown as jest.Mocked<IAppointmentStatusRepository>;
 
+    mockServiceRepository = {
+      findById: jest.fn(),
+      findByName: jest.fn(),
+      findAll: jest.fn(),
+      findActive: jest.fn(),
+      findByCategory: jest.fn(),
+      findActiveByCategoryId: jest.fn(),
+      save: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+      existsById: jest.fn(),
+      existsByName: jest.fn(),
+    };
+
+    mockStylistServiceRepository = {
+      findByStylistAndService: jest.fn(),
+      findByStylist: jest.fn(),
+      findByService: jest.fn(),
+      findActiveOfferings: jest.fn(),
+      findStylistsOfferingService: jest.fn(),
+      save: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+      existsAssignment: jest.fn(),
+    };
+
     fakeGateway = new FakePaymentGateway();
 
+    mockServiceRepository.findById.mockResolvedValue(mockService);
+    mockStylistServiceRepository.findByStylist.mockResolvedValue([]);
     mockAppointmentRepository.findById.mockResolvedValue(mockAppointment as any);
     mockAppointmentStatusRepository.findById.mockResolvedValue(mockConfirmedStatus as any);
     mockPaymentRepository.findByAppointmentId.mockResolvedValue([]);
@@ -75,10 +118,12 @@ describe('CreateCheckout Use Case', () => {
       mockAppointmentRepository,
       mockAppointmentStatusRepository,
       fakeGateway,
+      mockServiceRepository,
+      mockStylistServiceRepository,
     );
   });
 
-  const dto = { appointmentId: validAppointmentId, amount: 1500.5 };
+  const dto = { appointmentId: validAppointmentId };
 
   // Debería crear un checkout exitosamente y devolver created: true
   it('should create a checkout successfully', async () => {
@@ -122,14 +167,6 @@ describe('CreateCheckout Use Case', () => {
     expect(fakeGateway.createCheckoutCalls[0].description).toBe('Corte + color');
   });
 
-  // Debería lanzar ValidationError si el monto no es positivo
-  it('should throw ValidationError if amount is 0', async () => {
-    await expect(
-      createCheckout.execute({ ...dto, amount: 0 }, otherPersonId, 'ADMIN'),
-    ).rejects.toThrow(ValidationError);
-    expect(mockPaymentRepository.save).not.toHaveBeenCalled();
-  });
-
   // Debería lanzar NotFoundError si la cita no existe
   it('should throw NotFoundError when appointment does not exist', async () => {
     mockAppointmentRepository.findById.mockResolvedValue(null);
@@ -167,7 +204,7 @@ describe('CreateCheckout Use Case', () => {
     expect(result.created).toBe(true);
   });
 
-  describe('D1: ownership (ADMIN / STYLIST dueño / CLIENT dueño)', () => {
+  describe('Ownership (ADMIN / STYLIST dueño / CLIENT dueño)', () => {
     // Debería permitir a ADMIN sin importar el ownership de la cita
     it('should allow ADMIN regardless of ownership', async () => {
       const result = await createCheckout.execute(dto, otherPersonId, 'ADMIN');
@@ -266,7 +303,7 @@ describe('CreateCheckout Use Case', () => {
     });
   });
 
-  describe('D5: un solo checkout PENDING por cita (409)', () => {
+  describe('Cobro único por cita (409)', () => {
     // Debería lanzar ConflictError si ya hay un Payment PENDING respaldado por la pasarela para la misma cita
     it('should throw ConflictError when a gateway-backed PENDING payment already exists for the appointment', async () => {
       const openCheckout = Payment.createForGateway(
@@ -295,8 +332,8 @@ describe('CreateCheckout Use Case', () => {
       expect(result.created).toBe(true);
     });
 
-    // No debería generar conflicto con un pago de pasarela ya resuelto (COMPLETED)
-    it('should not conflict with a gateway-backed payment that is already resolved (COMPLETED)', async () => {
+    // Debería lanzar ConflictError si la cita ya tiene un pago de pasarela completado
+    it('should throw ConflictError when a gateway-backed payment for the appointment is already COMPLETED', async () => {
       const resolvedPayment = Payment.createForGateway(
         'resolved-payment-id',
         1000,
@@ -310,9 +347,11 @@ describe('CreateCheckout Use Case', () => {
       });
       mockPaymentRepository.findByAppointmentId.mockResolvedValue([resolvedPayment]);
 
-      const result = await createCheckout.execute(dto, otherPersonId, 'ADMIN');
-
-      expect(result.created).toBe(true);
+      await expect(createCheckout.execute(dto, otherPersonId, 'ADMIN')).rejects.toThrow(
+        ConflictError,
+      );
+      expect(mockPaymentRepository.save).not.toHaveBeenCalled();
+      expect(fakeGateway.createCheckoutCalls).toHaveLength(0);
     });
   });
 
