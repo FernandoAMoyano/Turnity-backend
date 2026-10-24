@@ -43,6 +43,7 @@ export class PrismaPaymentRepository implements IPaymentRepository, IPaymentGate
         gatewayStatus: payment.gatewayStatus,
         idempotencyKey: payment.idempotencyKey,
         checkoutUrl: payment.checkoutUrl,
+        checkoutExpiresAt: payment.checkoutExpiresAt,
         refundedAmount: payment.refundedAmount,
         gatewayRefundId: payment.gatewayRefundId,
         failureReason: payment.failureReason,
@@ -179,6 +180,7 @@ export class PrismaPaymentRepository implements IPaymentRepository, IPaymentGate
         gatewayPreferenceId: payment.gatewayPreferenceId ?? null,
         gatewayStatus: payment.gatewayStatus ?? null,
         checkoutUrl: payment.checkoutUrl ?? null,
+        checkoutExpiresAt: payment.checkoutExpiresAt ?? null,
         refundedAmount: payment.refundedAmount ?? null,
         gatewayRefundId: payment.gatewayRefundId ?? null,
         failureReason: payment.failureReason ?? null,
@@ -303,6 +305,7 @@ export class PrismaPaymentRepository implements IPaymentRepository, IPaymentGate
       gatewayStatus: data.gatewayStatus ?? undefined,
       idempotencyKey: data.idempotencyKey ?? undefined,
       checkoutUrl: data.checkoutUrl ?? undefined,
+      checkoutExpiresAt: data.checkoutExpiresAt ?? undefined,
       // Comparación explícita contra null: un reembolso de 0 es un valor
       // legítimo y `?? undefined` sobre un Decimal 0 lo conservaría, pero
       // Number(null) daría 0 y falsearía el dato.
