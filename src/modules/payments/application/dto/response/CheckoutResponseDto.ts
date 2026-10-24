@@ -15,6 +15,15 @@ export interface CheckoutResponseDto {
   paymentId: string;
 
   /**
+   * Monto que se va a cobrar, en la unidad monetaria base
+   * @description Lo calcula el servidor a partir de los servicios de la cita.
+   * Se devuelve para que el frontend pueda mostrarlo antes de redirigir al
+   * pagador.
+   * @example 85.5
+   */
+  amount: number;
+
+  /**
    * URL de checkout hospedado a la que se redirige al pagador
    */
   checkoutUrl: string;
@@ -25,9 +34,7 @@ export interface CheckoutResponseDto {
   gatewayPreferenceId: string;
 
   /**
-   * Vencimiento de la preferencia (D6: 30 minutos desde su creación).
-   * No se persiste en `Payment` -- se recalcula acá a partir de lo que
-   * devuelve la pasarela en el momento de crear el checkout.
+   * Vencimiento de la preferencia, tal como lo informó la pasarela al crearla
    */
   expiresAt: Date;
 
