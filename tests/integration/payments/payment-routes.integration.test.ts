@@ -338,7 +338,7 @@ describe('Payments Integration Tests', () => {
       expect(payments[0].failureReason).toBe('Payment gateway is not configured');
     });
 
-    // D5: un solo checkout PENDING por cita -- 409 si ya hay uno abierto
+    // Un solo checkout PENDING por cita: 409 si ya hay uno abierto
     // (gateway-backed) para la misma cita. Se inserta el Payment PENDING
     // directo por Prisma porque, en este entorno sin pasarela configurada,
     // no hay forma de dejar uno abierto pasando por el endpoint (siempre
@@ -1044,7 +1044,7 @@ describe('Payments Integration Tests', () => {
   // Ownership en payments: STYLIST solo accede a pagos de sus propias
   // citas; CLIENT dueño de la cita gana acceso de lectura vía
   // GET /payments/appointment/:appointmentId; ADMIN sin restricción
-  describe('Ownership (F18)', () => {
+  describe('Ownership', () => {
     let stylistAToken: string;
     let stylistAId: string;
     let stylistBToken: string;
@@ -1159,7 +1159,7 @@ describe('Payments Integration Tests', () => {
       expect(response.body.data.status).toBe('COMPLETED');
     });
 
-    // El CLIENT dueño de la cita gana acceso de lectura a sus pagos (F18, alcance b)
+    // El CLIENT dueño de la cita gana acceso de lectura a sus pagos
     it('should allow the owning client to view payments via GET /payments/appointment/:appointmentId', async () => {
       const createResponse = await request(app)
         .post('/api/v1/payments')
@@ -1220,7 +1220,8 @@ describe('Payments Integration Tests', () => {
      * Inserta un pago respaldado por pasarela directo por Prisma. En este
      * entorno no hay pasarela configurada, así que no hay forma de llegar a uno
      * pasando por el endpoint de checkout (siempre termina FAILED); mismo
-     * criterio que el test de D5 más arriba en este archivo.
+     * criterio que el test del 409 por checkout abierto, más arriba en este
+     * archivo.
      */
     const createGatewayBackedPayment = async (status: 'PENDING' | 'COMPLETED') => {
       const appointment = await createConfirmedTestAppointment({ stylistId });
