@@ -22,9 +22,11 @@ export class PaymentValidations {
 
   /**
    * Validación para crear un checkout contra la pasarela de pago
-   * @description `Idempotency-Key` se valida como header opcional -- si se
-   * envía, tiene que ser un UUID (mismo formato que el resto de los ids del
-   * sistema); si no se envía, `CreateCheckout` genera uno.
+   * @description El body no lleva monto: lo calcula el servidor a partir de
+   * los servicios de la cita, y un `amount` enviado se ignora como cualquier
+   * otro campo desconocido. `Idempotency-Key` se valida como header opcional --
+   * si se envía, tiene que ser un UUID (mismo formato que el resto de los ids
+   * del sistema); si no se envía, `CreateCheckout` genera uno.
    */
   static createCheckout = [
     body('appointmentId')
@@ -32,11 +34,6 @@ export class PaymentValidations {
       .withMessage('Appointment ID is required')
       .isUUID()
       .withMessage('Appointment ID must be a valid UUID'),
-    body('amount')
-      .notEmpty()
-      .withMessage('Amount is required')
-      .isFloat({ min: 0.01 })
-      .withMessage('Amount must be greater than 0'),
     body('description')
       .optional()
       .isString()

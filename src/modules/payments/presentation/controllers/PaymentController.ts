@@ -81,32 +81,33 @@ export class PaymentController {
    * Abre un checkout contra la pasarela de pago (ADMIN, STYLIST dueño,
    * CLIENT dueño de la cita)
    * @route POST /payments/checkout
-   * @param req - Request autenticado con `appointmentId`/`amount`/
-   * `description?` en el body y `Idempotency-Key` opcional en headers
+   * @param req - Request autenticado con `appointmentId` y `description?` en
+   * el body y `Idempotency-Key` opcional en headers. El monto lo calcula el
+   * servidor.
    * @param res - Response de Express
    * @returns Promise con el checkout creado (o el ya existente, ante un
    * reintento con la misma `Idempotency-Key`)
    * @responseStatus 201 - Checkout creado
    * @responseStatus 200 - `Idempotency-Key` ya usada: se devuelve el checkout existente
-   * @throws NotFoundError si la cita no existe
+   * @throws NotFoundError si la cita o alguno de sus servicios no existe
    * @throws ForbiddenError si el usuario no tiene permisos sobre la cita
    * @throws BusinessRuleError si la cita no está en un estado válido para pagar,
-   * o si la pasarela no está configurada
-   * @throws ConflictError si ya hay un checkout pendiente para la cita (D5)
+   * si no tiene servicios que cobrar o si la pasarela no está configurada
+   * @throws ConflictError si la cita ya está pagada o ya tiene un checkout pendiente
+   * @throws AppError con status 502 si la pasarela falla
    */
   async createCheckout(req: AuthenticatedRequest, res: Response): Promise<Response> {
     if (!req.user?.userId || !req.user?.roleName) {
       throw new UnauthorizedError('Authentication required');
     }
 
-    const { appointmentId, amount, description } = req.body ?? {};
+    const { appointmentId, description } = req.body ?? {};
     // express-validator normaliza el nombre de header a minúsculas
     const idempotencyKey = req.header('idempotency-key') || undefined;
 
     const { dto: checkout, created } = await this._createCheckout.execute(
       {
         appointmentId,
-        amount,
         description,
         idempotencyKey,
       },
@@ -153,7 +154,7 @@ export class PaymentController {
    * Obtiene los pagos de una cita
    * @route GET /payments/appointment/:appointmentId
    * @param req - Request autenticado con ID de la cita en params. Accesible
-   * para ADMIN, STYLIST (dueño de la cita) y CLIENT (dueño de la cita, F18)
+   * para ADMIN, STYLIST (dueño de la cita) y CLIENT (dueño de la cita)
    * @param res - Response de Express
    * @returns Promise con la lista de pagos de la cita
    * @responseStatus 200 - Pagos obtenidos exitosamente
