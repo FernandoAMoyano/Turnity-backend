@@ -8,6 +8,7 @@ import {
   GatewayNotification,
   WebhookSignatureInput,
 } from '../../domain/gateways/IPaymentGateway';
+import { PaymentGatewayError } from '../../domain/gateways/PaymentGatewayError';
 import { logger } from '../../../../shared/logger/logger';
 import { parseJsonPreservingLargeIntegers } from '../../../../shared/utils/json';
 
@@ -167,8 +168,8 @@ export class MercadoPagoGateway implements IPaymentGateway {
    * respuesta de MP, o `sandbox_init_point` si el token es `TEST-`),
    * `gatewayPreferenceId` (el `id` que devuelve Mercado Pago) y `expiresAt`
    * (calculado localmente: ahora + 30 minutos).
-   * @throws Error si Mercado Pago responde con un status HTTP no exitoso
-   * (ver `throwGatewayError`).
+   * @throws PaymentGatewayError si Mercado Pago responde con un status HTTP no
+   * exitoso (ver `throwGatewayError`) o si la llamada no llega a completarse.
    */
   async createCheckout(input: CreateCheckoutInput): Promise<GatewayCheckout> {
     const expiresAt = new Date(Date.now() + CHECKOUT_EXPIRATION_MINUTES * 60_000);
@@ -223,7 +224,8 @@ export class MercadoPagoGateway implements IPaymentGateway {
    * @returns El `GatewayPaymentSnapshot` mapeado desde la respuesta de
    * `GET /v1/payments/{id}`, o `null` si Mercado Pago responde 404 (el id no
    * existe para esta cuenta/credenciales).
-   * @throws Error si la respuesta HTTP no es exitosa y tampoco es 404.
+   * @throws PaymentGatewayError si la respuesta HTTP no es exitosa y tampoco
+   * es 404, o si la llamada no llega a completarse.
    */
   async getPayment(gatewayPaymentId: string): Promise<GatewayPaymentSnapshot | null> {
     const response = await this.request(
@@ -256,7 +258,8 @@ export class MercadoPagoGateway implements IPaymentGateway {
    * `external_reference` de la preferencia (ver `createCheckout`).
    * @returns El `GatewayPaymentSnapshot` del pago elegido, o `null` si la
    * búsqueda no devuelve resultados.
-   * @throws Error si la respuesta HTTP no es exitosa (ver `throwGatewayError`).
+   * @throws PaymentGatewayError si la respuesta HTTP no es exitosa (ver
+   * `throwGatewayError`) o si la llamada no llega a completarse.
    */
   async findPaymentByExternalReference(
     externalReference: string,
@@ -298,7 +301,8 @@ export class MercadoPagoGateway implements IPaymentGateway {
    * Mercado Pago para el reembolso), `amount` efectivamente reembolsado y
    * `status` colapsado a `'approved'`, `'pending'` o `'rejected'` (ver el
    * mapeo en `REFUND_STATUS_MAP`).
-   * @throws Error si Mercado Pago responde con un status HTTP no exitoso.
+   * @throws PaymentGatewayError si Mercado Pago responde con un status HTTP no
+   * exitoso o si la llamada no llega a completarse.
    */
   async refund(gatewayPaymentId: string, idempotencyKey: string): Promise<GatewayRefund> {
     const response = await this.request(
@@ -342,7 +346,8 @@ export class MercadoPagoGateway implements IPaymentGateway {
    *
    * @description Formato verificado contra la documentación vigente de
    * Mercado Pago.
-   * - Header `x-signature`: `ts=<epoch-ms>,v1=<hex-hmac>`.
+   * - Header `x-signature`: `ts=<epoch>,v1=<hex-hmac>`. El `ts` llega en
+   *   segundos; `normalizeTsToMs` acepta también milisegundos.
    * - Manifest: `id:{data.id en minúsculas};request-id:{x-request-id};ts:{ts};`
    *   -- orden fijo, `;` final incluido. Si falta algún valor, esa línea se
    *   omite del manifest en vez de dejarla vacía.
@@ -466,6 +471,8 @@ export class MercadoPagoGateway implements IPaymentGateway {
    * reintentar, hasta `MAX_RETRIES`.
    * @returns La `Response` de `fetch`, exitosa o no -- el caller decide qué
    * hacer con `response.ok` (ej. `throwGatewayError`).
+   * @throws PaymentGatewayError sin status si la llamada falla también en el
+   * último intento (error de red o timeout).
    */
   private async request(url: string, init: RequestInit, attempt = 0): Promise<Response> {
     try {
@@ -483,7 +490,8 @@ export class MercadoPagoGateway implements IPaymentGateway {
       if (attempt < MAX_RETRIES) {
         return this.request(url, init, attempt + 1);
       }
-      throw error;
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new PaymentGatewayError(`MercadoPago gateway request failed: ${reason}`);
     }
   }
 
@@ -516,7 +524,8 @@ export class MercadoPagoGateway implements IPaymentGateway {
   }
 
   /**
-   * Loguea el fallo y lanza un `Error`. El access token vive solo en el header
+   * Loguea el fallo y lanza un `PaymentGatewayError` con el status que
+   * respondió Mercado Pago. El access token vive solo en el header
    * `Authorization`, que nunca se pasa a `logger` -- se registra el status y
    * un extracto acotado del cuerpo de error, nunca el request completo.
    * @param action - Frase corta en gerundio que describe la operación que
@@ -526,7 +535,7 @@ export class MercadoPagoGateway implements IPaymentGateway {
    * @param response - La `Response` de `fetch` con `ok === false`, tal como
    * la devolvió Mercado Pago (este método solo se usa en las tres llamadas
    * salientes a la API de MP, nunca para la respuesta al webhook).
-   * @throws Error - Siempre lo lanza (de ahí el tipo de retorno
+   * @throws PaymentGatewayError - Siempre lo lanza (de ahí el tipo de retorno
    * `Promise<never>`); nunca hay un valor de éxito que devolver.
    */
   private async throwGatewayError(action: string, response: Response): Promise<never> {
@@ -535,7 +544,10 @@ export class MercadoPagoGateway implements IPaymentGateway {
       status: response.status,
       body: body.slice(0, 500),
     });
-    throw new Error(`MercadoPago gateway error ${action}: HTTP ${response.status}`);
+    throw new PaymentGatewayError(
+      `MercadoPago gateway error ${action}: HTTP ${response.status}`,
+      response.status,
+    );
   }
 
   /**
@@ -604,7 +616,7 @@ export class MercadoPagoGateway implements IPaymentGateway {
   /**
    * Parsea el header `x-signature` (`ts=...,v1=...`) en sus dos componentes
    * @param header - Valor crudo del header `x-signature`, tal como llega en
-   * el request (`string`, formato `"ts=<epoch-ms>,v1=<hex>"`); es el mismo
+   * el request (`string`, formato `"ts=<epoch>,v1=<hex>"`); es el mismo
    * valor que recibe `verifyWebhookSignature` en `input.xSignature`.
    * @returns `{ ts, v1 }` ya separados (ambos `string`, sin convertir), o
    * `null` si falta `ts` o `v1` -- header ausente de alguno de los dos, o

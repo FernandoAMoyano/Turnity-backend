@@ -123,8 +123,8 @@ export interface IPaymentGateway {
    * en este archivo).
    * @returns La intención de cobro creada (tipo `GatewayCheckout`): URL de
    * checkout hospedado, id de la preferencia en la pasarela y vencimiento.
-   * @throws Error si la pasarela responde con un error al crear la
-   * preferencia.
+   * @throws PaymentGatewayError si la pasarela responde con un error al crear
+   * la preferencia o si la llamada no llega a completarse.
    */
   createCheckout(input: CreateCheckoutInput): Promise<GatewayCheckout>;
 
@@ -139,8 +139,8 @@ export interface IPaymentGateway {
    * hay `Payment` local para esa notificación.
    * @returns El snapshot (tipo `GatewayPaymentSnapshot`), o `null` si la
    * pasarela no reconoce el id (nunca lanza una excepción en ese caso).
-   * @throws Error si la respuesta de la pasarela no es exitosa y tampoco
-   * indica "no encontrado".
+   * @throws PaymentGatewayError si la respuesta de la pasarela no es exitosa y
+   * tampoco indica "no encontrado", o si la llamada no llega a completarse.
    */
   getPayment(gatewayPaymentId: string): Promise<GatewayPaymentSnapshot | null>;
 
@@ -157,7 +157,8 @@ export interface IPaymentGateway {
    * @returns El snapshot del pago (tipo `GatewayPaymentSnapshot`), o `null` si
    * la pasarela no tiene ningún pago con esa referencia (nunca lanza una
    * excepción en ese caso).
-   * @throws Error si la respuesta de la pasarela no es exitosa.
+   * @throws PaymentGatewayError si la respuesta de la pasarela no es exitosa o
+   * si la llamada no llega a completarse.
    */
   findPaymentByExternalReference(externalReference: string): Promise<GatewayPaymentSnapshot | null>;
 
@@ -169,8 +170,8 @@ export interface IPaymentGateway {
    * @param idempotencyKey - Evita un doble reembolso ante un reintento
    * (`string`); la arma el caso de uso que ejecuta el reembolso.
    * @returns El reembolso ejecutado (tipo `GatewayRefund`).
-   * @throws Error si la pasarela responde con un error al crear el
-   * reembolso.
+   * @throws PaymentGatewayError si la pasarela responde con un error al crear
+   * el reembolso o si la llamada no llega a completarse.
    */
   refund(gatewayPaymentId: string, idempotencyKey: string): Promise<GatewayRefund>;
 
