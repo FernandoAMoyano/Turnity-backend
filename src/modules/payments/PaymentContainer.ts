@@ -12,6 +12,10 @@ import { IAppointmentRepository } from '../appointments/domain/repositories/IApp
 import { IAppointmentStatusRepository } from '../appointments/domain/repositories/IAppointmentStatusRepository';
 import { PrismaAppointmentRepository } from '../appointments/infrastructure/persistence/PrismaAppointmentRepository';
 import { PrismaAppointmentStatusRepository } from '../appointments/infrastructure/persistence/PrismaAppointmentStatusRepository';
+import { IServiceRepository } from '../services/domain/repositories/IServiceRepository';
+import { IStylistServiceRepository } from '../services/domain/repositories/IStylistServiceRepository';
+import { PrismaServiceRepository } from '../services/infrastructure/persistence/PrismaServiceRepository';
+import { PrismaStylistServiceRepository } from '../services/infrastructure/persistence/PrismaStylistServiceRepository';
 
 // Gateway de pago
 import { IPaymentGateway } from './domain/gateways/IPaymentGateway';
@@ -59,6 +63,8 @@ export class PaymentContainer {
   // Repositorios externos
   private _appointmentRepository: IAppointmentRepository;
   private _appointmentStatusRepository: IAppointmentStatusRepository;
+  private _serviceRepository: IServiceRepository;
+  private _stylistServiceRepository: IStylistServiceRepository;
 
   // Gateway de pago
   private _paymentGateway: IPaymentGateway;
@@ -118,8 +124,10 @@ export class PaymentContainer {
     this._paymentGatewayEventRepository = new PrismaPaymentGatewayEventRepository(this.prisma);
     this._appointmentRepository = new PrismaAppointmentRepository(this.prisma);
     this._appointmentStatusRepository = new PrismaAppointmentStatusRepository(this.prisma);
+    this._serviceRepository = new PrismaServiceRepository(this.prisma);
+    this._stylistServiceRepository = new PrismaStylistServiceRepository(this.prisma);
 
-    // 2. Resolver el gateway de pago (único punto de decisión: F2, D-F2.1)
+    // 2. Resolver el gateway de pago (la factory es el único punto que elige el adapter)
     this._paymentGateway = createPaymentGateway();
 
     // 3. Inicializar use cases
@@ -133,6 +141,8 @@ export class PaymentContainer {
       this._appointmentRepository,
       this._appointmentStatusRepository,
       this._paymentGateway,
+      this._serviceRepository,
+      this._stylistServiceRepository,
     );
     this._handleGatewayWebhook = new HandleGatewayWebhook(
       this._paymentRepository,
