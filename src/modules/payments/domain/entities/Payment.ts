@@ -301,6 +301,19 @@ export class Payment {
   }
 
   /**
+   * Vencimiento con el que se evalúa el checkout
+   * @description Es el que informó la pasarela o, si no quedó registrado, la
+   * vigencia por defecto contada desde la creación del pago. No incluye el
+   * margen de espera que aplica `hasCheckoutExpired`.
+   */
+  get effectiveCheckoutExpiresAt(): Date {
+    return (
+      this._checkoutExpiresAt ??
+      new Date(this._createdAt.getTime() + DEFAULT_CHECKOUT_EXPIRATION_MINUTES * 60_000)
+    );
+  }
+
+  /**
    * Monto efectivamente reembolsado por la pasarela
    */
   get refundedAmount(): number | undefined {
@@ -506,8 +519,8 @@ export class Payment {
    * @param checkoutUrl - URL de checkout hospedado a la que se redirige al pagador
    * @param gatewayPreferenceId - Identificador de la preferencia en la pasarela
    * @param expiresAt - Vencimiento de la preferencia informado por la pasarela.
-   * Sin este dato, `hasCheckoutExpired` usa la vigencia por defecto contada
-   * desde la creación del pago.
+   * Sin este dato, `effectiveCheckoutExpiresAt` usa la vigencia por defecto
+   * contada desde la creación del pago.
    */
   recordCheckoutCreated(checkoutUrl: string, gatewayPreferenceId: string, expiresAt?: Date): void {
     this._checkoutUrl = checkoutUrl;
@@ -519,11 +532,10 @@ export class Payment {
   /**
    * Indica si el checkout de pasarela de este pago ya venció
    * @description Solo un pago de pasarela PENDING tiene un checkout abierto que
-   * pueda vencer; para cualquier otro devuelve false. El vencimiento es el que
-   * informó la pasarela o, si no quedó registrado, la vigencia por defecto
-   * contada desde la creación del pago. Se considera vencido recién cuando pasó
-   * también el margen de espera. Que haya vencido no significa que nadie lo haya
-   * pagado: quien lo use tiene que consultar a la pasarela antes de liberarlo.
+   * pueda vencer; para cualquier otro devuelve false. Se considera vencido
+   * recién cuando pasaron `effectiveCheckoutExpiresAt` y el margen de espera.
+   * Que haya vencido no significa que nadie lo haya pagado: quien lo use tiene
+   * que consultar a la pasarela antes de liberarlo.
    * @param now - Momento contra el que se compara (por defecto, el actual)
    * @returns true si pasaron el vencimiento y el margen de espera
    */
@@ -532,11 +544,10 @@ export class Payment {
       return false;
     }
 
-    const expiresAt =
-      this._checkoutExpiresAt ??
-      new Date(this._createdAt.getTime() + DEFAULT_CHECKOUT_EXPIRATION_MINUTES * 60_000);
+    const deadline =
+      this.effectiveCheckoutExpiresAt.getTime() + CHECKOUT_EXPIRATION_GRACE_MINUTES * 60_000;
 
-    return now.getTime() > expiresAt.getTime() + CHECKOUT_EXPIRATION_GRACE_MINUTES * 60_000;
+    return now.getTime() > deadline;
   }
 
   /**
