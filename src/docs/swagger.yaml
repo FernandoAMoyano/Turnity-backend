@@ -1677,7 +1677,7 @@ paths:
       tags: [Payments]
       summary: Abrir un checkout contra la pasarela de pago (Admin, Stylist dueño, Client dueño)
       description: |
-        Crea un pago PENDING respaldado por la pasarela y devuelve la URL de checkout hospedado a la que redirigir al pagador.
+        Crea un pago PENDING respaldado por la pasarela y devuelve la URL de checkout hospedado a la que redirigir al pagador. El checkout solo ofrece tarjeta (crédito, débito o prepaga) y dinero en cuenta: no acepta pagos en efectivo.
 
         El monto lo calcula el servidor a partir de los servicios de la cita, al precio propio del estilista asignado si lo tiene. Un `amount` enviado en el body se ignora.
 
