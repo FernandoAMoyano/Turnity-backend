@@ -8,6 +8,7 @@ import { NotFoundError } from '../../../../shared/exceptions/NotFoundError';
 import { BusinessRuleError } from '../../../../shared/exceptions/BusinessRuleError';
 import { ForbiddenError } from '../../../../shared/exceptions/ForbiddenError';
 import { AppError } from '../../../../shared/exceptions/AppError';
+import { translateGatewayFailure } from '../errors/translateGatewayFailure';
 import { logger } from '../../../../shared/logger/logger';
 
 /**
@@ -29,9 +30,8 @@ const GATEWAY_REFUNDED_STATUS = 'refunded';
  * que todavía no salió.
  *
  * Aplica control de acceso por ownership en los dos caminos: ADMIN sin
- * restricción, STYLIST solo si es el estilista asignado a la cita del pago;
- * CLIENT no tiene acceso a esta operación (fuera del alcance aprobado, ver
- * F18).
+ * restricción, STYLIST solo si es el estilista asignado a la cita del pago.
+ * CLIENT no tiene acceso a esta operación.
  */
 export class RefundPayment {
   constructor(
@@ -176,17 +176,12 @@ export class RefundPayment {
 
       // Sin pasarela configurada, NoopPaymentGateway lanza BusinessRuleError
       // (422): es un error de configuración de este servidor, no un fallo del
-      // proveedor externo, así que se repropaga tal cual en vez de disfrazarse
-      // de 502.
-      if (error instanceof AppError) {
-        throw error;
-      }
-
-      throw new AppError(
-        'The payment gateway did not process the refund. Please try again later.',
-        502,
-        'BUSINESS_RULE_ERROR',
-      );
+      // proveedor externo, y `translateGatewayFailure` lo devuelve tal cual en
+      // vez de disfrazarlo de 502.
+      throw translateGatewayFailure(error, {
+        retryable: 'The payment gateway did not process the refund. Please try again later.',
+        rejected: 'The payment gateway rejected the refund request.',
+      });
     }
   }
 
