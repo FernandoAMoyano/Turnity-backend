@@ -8,7 +8,24 @@ describe('Payments Complete Flow E2E Tests', () => {
   let adminToken: string;
   let userToken: string;
   let stylistToken: string;
+  let stylistId: string;
   let testAppointmentId: string;
+
+  /**
+   * Crea un pago manual PENDING sobre una cita confirmada nueva
+   * @description Una cita se cobra una sola vez: si el pago se creara sobre una
+   * cita compartida con un test que ya completó otro pago, respondería 409.
+   * @param token - Token del usuario que crea el pago
+   * @param amount - Monto del pago
+   * @returns La respuesta de POST /api/v1/payments
+   */
+  const createPendingManualPayment = async (token: string, amount: number) => {
+    const appointment = await createConfirmedTestAppointment({ stylistId });
+    return request(app)
+      .post('/api/v1/payments')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ amount, appointmentId: appointment.id });
+  };
 
   beforeAll(async () => {
     // Login como admin
@@ -24,7 +41,7 @@ describe('Payments Complete Flow E2E Tests', () => {
       password: 'stylist123',
     });
     stylistToken = stylistResponse.body.data.token;
-    const stylistId = stylistResponse.body.data.user.id;
+    stylistId = stylistResponse.body.data.user.id;
 
     // Crear una cita de prueba confirmada para los tests E2E de pagos, asignada
     // explícitamente al estilista de arriba (F18: el flujo de permisos más abajo
@@ -262,13 +279,7 @@ describe('Payments Complete Flow E2E Tests', () => {
   // Flujo de cancelación de pago pendiente
   it('should allow cancellation of pending payment', async () => {
     // 1. Crear pago pendiente
-    const createResponse = await request(app)
-      .post('/api/v1/payments')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({
-        amount: 75.0,
-        appointmentId: testAppointmentId,
-      });
+    const createResponse = await createPendingManualPayment(adminToken, 75.0);
 
     expect(createResponse.status).toBe(201);
     const paymentId = createResponse.body.data.id;
@@ -312,13 +323,7 @@ describe('Payments Complete Flow E2E Tests', () => {
 
     for (const method of paymentMethods) {
       // Crear pago
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          amount: 50.0,
-          appointmentId: testAppointmentId,
-        });
+      const createResponse = await createPendingManualPayment(adminToken, 50.0);
 
       expect(createResponse.status).toBe(201);
       const paymentId = createResponse.body.data.id;
@@ -359,13 +364,7 @@ describe('Payments Complete Flow E2E Tests', () => {
     // ==========================================
 
     // Stylist puede crear pago
-    const stylistCreateResponse = await request(app)
-      .post('/api/v1/payments')
-      .set('Authorization', `Bearer ${stylistToken}`)
-      .send({
-        amount: 60.0,
-        appointmentId: testAppointmentId,
-      });
+    const stylistCreateResponse = await createPendingManualPayment(stylistToken, 60.0);
 
     expect(stylistCreateResponse.status).toBe(201);
     const stylistPaymentId = stylistCreateResponse.body.data.id;
@@ -399,13 +398,7 @@ describe('Payments Complete Flow E2E Tests', () => {
     expect(stylistStatsResponse.status).toBe(403);
 
     // Stylist NO puede actualizar monto
-    const anotherPaymentResponse = await request(app)
-      .post('/api/v1/payments')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({
-        amount: 80.0,
-        appointmentId: testAppointmentId,
-      });
+    const anotherPaymentResponse = await createPendingManualPayment(adminToken, 80.0);
 
     const anotherPaymentId = anotherPaymentResponse.body.data.id;
 
@@ -486,7 +479,8 @@ describe('Payments Complete Flow E2E Tests', () => {
    */
   // Flujo de paginación y filtros
   it('should support pagination and filters correctly', async () => {
-    // Crear varios pagos para tener datos
+    // Crear varios pagos pendientes sobre una cita propia para tener datos
+    const { id: appointmentId } = await createConfirmedTestAppointment({ stylistId });
     const paymentsToCreate = 5;
     for (let i = 0; i < paymentsToCreate; i++) {
       const createResponse = await request(app)
@@ -494,7 +488,7 @@ describe('Payments Complete Flow E2E Tests', () => {
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
           amount: 30.0 + i * 10,
-          appointmentId: testAppointmentId,
+          appointmentId,
         });
       expect(createResponse.status).toBe(201);
     }
@@ -525,12 +519,12 @@ describe('Payments Complete Flow E2E Tests', () => {
 
     // Verificar filtro por appointmentId
     const byAppointmentResponse = await request(app)
-      .get(`/api/v1/payments?appointmentId=${testAppointmentId}`)
+      .get(`/api/v1/payments?appointmentId=${appointmentId}`)
       .set('Authorization', `Bearer ${adminToken}`);
 
     expect(byAppointmentResponse.status).toBe(200);
     byAppointmentResponse.body.data.payments.forEach((payment: any) => {
-      expect(payment.appointmentId).toBe(testAppointmentId);
+      expect(payment.appointmentId).toBe(appointmentId);
     });
   });
 
@@ -575,13 +569,7 @@ describe('Payments Complete Flow E2E Tests', () => {
   // Flujo de validación de reglas de negocio
   it('should enforce business rules correctly', async () => {
     // Crear pago
-    const createResponse = await request(app)
-      .post('/api/v1/payments')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({
-        amount: 100.0,
-        appointmentId: testAppointmentId,
-      });
+    const createResponse = await createPendingManualPayment(adminToken, 100.0);
 
     const paymentId = createResponse.body.data.id;
 
