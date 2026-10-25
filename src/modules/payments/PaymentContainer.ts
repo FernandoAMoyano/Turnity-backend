@@ -163,10 +163,7 @@ export class PaymentContainer {
       this._paymentGatewayEventRepository,
       this._paymentGateway,
     );
-    this._getPaymentById = new GetPaymentById(
-      this._paymentRepository,
-      this._appointmentRepository,
-    );
+    this._getPaymentById = new GetPaymentById(this._paymentRepository, this._appointmentRepository);
     this._getPaymentsByAppointment = new GetPaymentsByAppointment(
       this._paymentRepository,
       this._appointmentRepository,
@@ -208,10 +205,7 @@ export class PaymentContainer {
     this._paymentWebhookController = new PaymentWebhookController(this._handleGatewayWebhook);
 
     // 6. Inicializar routes
-    this._paymentRoutes = new PaymentRoutes(
-      this._paymentController,
-      this.authMiddleware,
-    );
+    this._paymentRoutes = new PaymentRoutes(this._paymentController, this.authMiddleware);
 
     // El router del webhook NO recibe authMiddleware: es un endpoint público
     // autenticado por firma HMAC, no por JWT (ver PaymentWebhookRoutes.ts).

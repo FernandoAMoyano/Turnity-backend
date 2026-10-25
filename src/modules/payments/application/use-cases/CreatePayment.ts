@@ -90,11 +90,7 @@ export class CreatePayment {
     );
 
     // Crear la entidad de pago
-    const payment = Payment.create(
-      generateUuid(),
-      dto.amount,
-      dto.appointmentId,
-    );
+    const payment = Payment.create(generateUuid(), dto.amount, dto.appointmentId);
 
     // Guardar en el repositorio
     const savedPayment = await this.paymentRepository.save(payment);
