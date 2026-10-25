@@ -253,6 +253,11 @@ model Payment {
 
   gatewayEvents PaymentGatewayEvent[]
 
+  // Ademas del indice de abajo, la base tiene un indice unico parcial que admite
+  // un solo pago de pasarela PENDING por cita
+  // ("Payment_appointmentId_open_gateway_checkout_key"). Prisma no expresa
+  // indices parciales, asi que existe solo en su migracion: si una migracion
+  // generada propone borrarlo, hay que quitar ese DROP INDEX antes de aplicarla.
   @@index([provider, status])
 }
 
