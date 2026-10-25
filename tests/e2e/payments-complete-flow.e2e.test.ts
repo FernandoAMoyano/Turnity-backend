@@ -458,12 +458,10 @@ describe('Payments Complete Flow E2E Tests', () => {
     // SIN AUTENTICACIÓN: Todo denegado
     // ==========================================
 
-    const noAuthCreateResponse = await request(app)
-      .post('/api/v1/payments')
-      .send({
-        amount: 50.0,
-        appointmentId: testAppointmentId,
-      });
+    const noAuthCreateResponse = await request(app).post('/api/v1/payments').send({
+      amount: 50.0,
+      appointmentId: testAppointmentId,
+    });
 
     expect(noAuthCreateResponse.status).toBe(401);
 
