@@ -18,6 +18,18 @@ import {
   PaginatedResult,
 } from '../../domain/repositories/IPaymentRepository';
 import { IPaymentGatewayLookup } from '../../domain/repositories/IPaymentGatewayLookup';
+import { ConflictError } from '../../../../shared/exceptions/ConflictError';
+
+/**
+ * Código de error de Prisma para violación de restricción única
+ */
+const UNIQUE_CONSTRAINT_VIOLATION = 'P2002';
+
+/**
+ * Índice único parcial que admite un solo pago de pasarela PENDING por cita.
+ * No figura en el schema de Prisma: se crea en su propia migración.
+ */
+const OPEN_GATEWAY_CHECKOUT_INDEX = 'Payment_appointmentId_open_gateway_checkout_key';
 
 /**
  * Implementación del repositorio de pagos con Prisma
@@ -27,8 +39,29 @@ export class PrismaPaymentRepository implements IPaymentRepository, IPaymentGate
 
   /**
    * Guarda un nuevo pago
+   * @description Si dos pedidos abren un checkout sobre la misma cita al mismo
+   * tiempo, los dos pasan la verificación de cobro único antes de que alguno
+   * guarde su pago. El índice único parcial de la base resuelve esa carrera:
+   * el segundo `create` falla y se traduce a un conflicto.
+   * @throws ConflictError si la cita ya tiene un checkout de pasarela abierto
    */
   async save(payment: Payment): Promise<Payment> {
+    try {
+      return await this.create(payment);
+    } catch (error) {
+      if (this.isOpenGatewayCheckoutViolation(error)) {
+        throw new ConflictError(
+          'There is already a pending checkout for this appointment. Wait for it to expire or resolve, or ask an admin to sync it.',
+        );
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Inserta el pago y lo devuelve como entidad de dominio
+   */
+  private async create(payment: Payment): Promise<Payment> {
     const data = await this.prisma.payment.create({
       data: {
         id: payment.id,
@@ -52,6 +85,28 @@ export class PrismaPaymentRepository implements IPaymentRepository, IPaymentGate
     });
 
     return this.toDomain(data);
+  }
+
+  /**
+   * Indica si el error es una violación del índice de un checkout abierto por cita
+   * @description Prisma informa en `meta.target` el nombre del índice o la
+   * lista de columnas, según conozca o no el índice desde el schema. Las dos
+   * formas identifican este índice sin ambigüedad: es la única restricción
+   * única sobre `appointmentId`.
+   */
+  private isOpenGatewayCheckoutViolation(error: unknown): boolean {
+    if (
+      !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+      error.code !== UNIQUE_CONSTRAINT_VIOLATION
+    ) {
+      return false;
+    }
+
+    const target = error.meta?.target;
+    if (typeof target === 'string') {
+      return target === OPEN_GATEWAY_CHECKOUT_INDEX;
+    }
+    return Array.isArray(target) && target.length === 1 && target[0] === 'appointmentId';
   }
 
   /**
