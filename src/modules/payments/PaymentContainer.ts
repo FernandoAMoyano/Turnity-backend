@@ -147,6 +147,7 @@ export class PaymentContainer {
       this._paymentRepository,
       this._appointmentRepository,
       this._appointmentStatusRepository,
+      this._appointmentChargeGuard,
     );
     this._createCheckout = new CreateCheckout(
       this._paymentRepository,
@@ -171,7 +172,11 @@ export class PaymentContainer {
       this._appointmentRepository,
     );
     this._getPayments = new GetPayments(this._paymentRepository);
-    this._processPayment = new ProcessPayment(this._paymentRepository, this._appointmentRepository);
+    this._processPayment = new ProcessPayment(
+      this._paymentRepository,
+      this._appointmentRepository,
+      this._appointmentChargeGuard,
+    );
     this._refundPayment = new RefundPayment(
       this._paymentRepository,
       this._appointmentRepository,
