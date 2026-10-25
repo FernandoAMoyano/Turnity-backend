@@ -1629,7 +1629,10 @@ paths:
     post:
       tags: [Payments]
       summary: Crear nuevo pago (Admin, Stylist)
-      description: Crea un pago pendiente asociado a una cita
+      description: |
+        Crea un pago manual PENDING asociado a una cita, que después se completa con `POST /payments/{id}/process`. STYLIST solo puede crear pagos de citas donde es el estilista asignado.
+
+        Una cita se cobra una sola vez: no se registra un pago si la cita ya tiene un pago completado, manual o de pasarela, ni si tiene un checkout de pasarela abierto. Un checkout vencido deja de bloquear recién después de confirmar con la pasarela que nadie lo pagó.
       requestBody:
         required: true
         content:
@@ -1671,6 +1674,46 @@ paths:
           $ref: '#/components/responses/Error401'
         '403':
           $ref: '#/components/responses/Error403'
+        '404':
+          description: La cita no existe
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: "Appointment not found: 123e4567-e89b-12d3-a456-426614174000"
+                code: "NOT_FOUND"
+        '409':
+          description: La cita ya tiene un pago completado o un checkout de pasarela abierto
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: "This appointment already has a completed payment. A new payment cannot be registered."
+                code: "CONFLICT"
+        '422':
+          description: La cita no está confirmada ni completada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: "Cannot create a payment for an appointment with status PENDING. Appointment must be confirmed or completed"
+                code: "BUSINESS_RULE_ERROR"
+        '502':
+          description: La pasarela falló o rechazó la operación al revisar un checkout vencido de la cita. El checkout sigue bloqueando el cobro hasta que se pueda revisar
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: "The payment gateway did not respond while checking an expired checkout for this appointment. Please try again later."
+                code: "BUSINESS_RULE_ERROR"
 
   /payments/checkout:
     post:
@@ -1964,9 +2007,10 @@ paths:
     post:
       tags: [Payments]
       summary: Procesar pago (Admin, Stylist)
-      description: >
-        Procesa un pago pendiente con el método de pago especificado. STYLIST
-        solo puede procesar pagos de citas donde es el estilista asignado (F18).
+      description: |
+        Procesa un pago manual pendiente con el método de pago especificado. STYLIST solo puede procesar pagos de citas donde es el estilista asignado. Un pago respaldado por la pasarela no se procesa a mano: lo completa la pasarela.
+
+        Una cita se cobra una sola vez: el pago no se completa si la cita ya tiene otro pago completado, manual o de pasarela, ni si tiene un checkout de pasarela abierto. La regla se revisa de nuevo acá porque entre la creación del pago y su procesamiento el cliente pudo haber pagado online.
       parameters:
         - name: id
           in: path
@@ -2012,8 +2056,28 @@ paths:
           $ref: '#/components/responses/Error403'
         '404':
           $ref: '#/components/responses/Error404'
+        '409':
+          description: La cita ya tiene otro pago completado o un checkout de pasarela abierto
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: "This appointment already has a completed payment. This payment cannot be processed."
+                code: "CONFLICT"
         '422':
           $ref: '#/components/responses/Error422'
+        '502':
+          description: La pasarela falló o rechazó la operación al revisar un checkout vencido de la cita. El checkout sigue bloqueando el cobro hasta que se pueda revisar
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: "The payment gateway did not respond while checking an expired checkout for this appointment. Please try again later."
+                code: "BUSINESS_RULE_ERROR"
 
   /payments/{id}/refund:
     post:

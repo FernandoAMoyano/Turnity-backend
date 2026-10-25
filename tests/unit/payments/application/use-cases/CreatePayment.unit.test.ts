@@ -1,8 +1,13 @@
 import { CreatePayment } from '../../../../../src/modules/payments/application/use-cases/CreatePayment';
+import { AppointmentChargeGuard } from '../../../../../src/modules/payments/application/services/AppointmentChargeGuard';
+import { FakePaymentGateway } from '../../fakes/FakePaymentGateway';
 import { IPaymentRepository } from '../../../../../src/modules/payments/domain/repositories/IPaymentRepository';
 import { IAppointmentRepository } from '../../../../../src/modules/appointments/domain/repositories/IAppointmentRepository';
 import { IAppointmentStatusRepository } from '../../../../../src/modules/appointments/domain/repositories/IAppointmentStatusRepository';
-import { Payment, PaymentStatusEnum } from '../../../../../src/modules/payments/domain/entities/Payment';
+import {
+  Payment,
+  PaymentStatusEnum,
+} from '../../../../../src/modules/payments/domain/entities/Payment';
 import { NotFoundError } from '../../../../../src/shared/exceptions/NotFoundError';
 import { BusinessRuleError } from '../../../../../src/shared/exceptions/BusinessRuleError';
 import { ForbiddenError } from '../../../../../src/shared/exceptions/ForbiddenError';
@@ -85,17 +90,20 @@ describe('CreatePayment Use Case', () => {
     mockAppointmentRepository.findById.mockResolvedValue(mockAppointment as any);
     mockAppointmentStatusRepository.findById.mockResolvedValue(mockConfirmedStatus as any);
 
+    mockPaymentRepository.findByAppointmentId.mockResolvedValue([]);
+
     createPayment = new CreatePayment(
       mockPaymentRepository,
       mockAppointmentRepository,
       mockAppointmentStatusRepository,
+      new AppointmentChargeGuard(mockPaymentRepository, new FakePaymentGateway()),
     );
   });
 
   // Debería crear un pago exitosamente
   it('should create a payment successfully', async () => {
     const dto = {
-      amount: 100.50,
+      amount: 100.5,
       appointmentId: validAppointmentId,
     };
 
@@ -103,7 +111,7 @@ describe('CreatePayment Use Case', () => {
 
     const result = await createPayment.execute(dto);
 
-    expect(result.amount).toBe(100.50);
+    expect(result.amount).toBe(100.5);
     expect(result.status).toBe(PaymentStatusEnum.PENDING);
     expect(result.method).toBeNull();
     expect(result.paymentDate).toBeNull();
@@ -136,7 +144,7 @@ describe('CreatePayment Use Case', () => {
   // Debería generar un ID único para el pago
   it('should generate a unique ID for the payment', async () => {
     const dto = {
-      amount: 75.00,
+      amount: 75.0,
       appointmentId: validAppointmentId,
     };
 
@@ -145,13 +153,15 @@ describe('CreatePayment Use Case', () => {
     const result = await createPayment.execute(dto);
 
     expect(result.id).toBeDefined();
-    expect(result.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    expect(result.id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
   });
 
   // Debería establecer createdAt y updatedAt
   it('should set createdAt and updatedAt', async () => {
     const dto = {
-      amount: 50.00,
+      amount: 50.0,
       appointmentId: validAppointmentId,
     };
 
@@ -183,7 +193,11 @@ describe('CreatePayment Use Case', () => {
       appointmentId: validAppointmentId,
     };
 
-    mockAppointmentStatusRepository.findById.mockResolvedValue({ id: validStatusId, name: 'PENDING', description: '' } as any);
+    mockAppointmentStatusRepository.findById.mockResolvedValue({
+      id: validStatusId,
+      name: 'PENDING',
+      description: '',
+    } as any);
 
     await expect(createPayment.execute(dto)).rejects.toThrow(BusinessRuleError);
     expect(mockPaymentRepository.save).not.toHaveBeenCalled();
@@ -196,7 +210,11 @@ describe('CreatePayment Use Case', () => {
       appointmentId: validAppointmentId,
     };
 
-    mockAppointmentStatusRepository.findById.mockResolvedValue({ id: validStatusId, name: 'CANCELLED', description: '' } as any);
+    mockAppointmentStatusRepository.findById.mockResolvedValue({
+      id: validStatusId,
+      name: 'CANCELLED',
+      description: '',
+    } as any);
 
     await expect(createPayment.execute(dto)).rejects.toThrow(BusinessRuleError);
     expect(mockPaymentRepository.save).not.toHaveBeenCalled();
@@ -209,7 +227,11 @@ describe('CreatePayment Use Case', () => {
       appointmentId: validAppointmentId,
     };
 
-    mockAppointmentStatusRepository.findById.mockResolvedValue({ id: validStatusId, name: 'COMPLETED', description: '' } as any);
+    mockAppointmentStatusRepository.findById.mockResolvedValue({
+      id: validStatusId,
+      name: 'COMPLETED',
+      description: '',
+    } as any);
     mockPaymentRepository.save.mockImplementation(async (payment: Payment) => payment);
 
     const result = await createPayment.execute(dto);
@@ -218,21 +240,21 @@ describe('CreatePayment Use Case', () => {
     expect(mockPaymentRepository.save).toHaveBeenCalledTimes(1);
   });
 
-  describe('PAY-25: Ownership Validation', () => {
+  describe('Ownership Validation', () => {
     const stylistId = mockAppointment.userId; // reutilizamos un UUID válido del fixture
     const otherStylistId = '123e4567-e89b-12d3-a456-426614174099';
 
     // Debería lanzar ForbiddenError si un STYLIST crea un pago para la cita de otro estilista
-    it('should throw ForbiddenError when a STYLIST creates a payment for another stylist\'s appointment', async () => {
+    it("should throw ForbiddenError when a STYLIST creates a payment for another stylist's appointment", async () => {
       const dto = { amount: 100, appointmentId: validAppointmentId };
       mockAppointmentRepository.findById.mockResolvedValue({
         ...mockAppointment,
         stylistId,
       } as any);
 
-      await expect(
-        createPayment.execute(dto, otherStylistId, 'STYLIST'),
-      ).rejects.toThrow(ForbiddenError);
+      await expect(createPayment.execute(dto, otherStylistId, 'STYLIST')).rejects.toThrow(
+        ForbiddenError,
+      );
       expect(mockPaymentRepository.save).not.toHaveBeenCalled();
     });
 

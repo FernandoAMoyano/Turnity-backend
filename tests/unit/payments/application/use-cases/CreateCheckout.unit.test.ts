@@ -1,4 +1,5 @@
 import { CreateCheckout } from '../../../../../src/modules/payments/application/use-cases/CreateCheckout';
+import { AppointmentChargeGuard } from '../../../../../src/modules/payments/application/services/AppointmentChargeGuard';
 import { IGatewayAwarePaymentRepository } from '../../../../../src/modules/payments/domain/repositories/IPaymentGatewayLookup';
 import { IAppointmentRepository } from '../../../../../src/modules/appointments/domain/repositories/IAppointmentRepository';
 import { IAppointmentStatusRepository } from '../../../../../src/modules/appointments/domain/repositories/IAppointmentStatusRepository';
@@ -120,6 +121,7 @@ describe('CreateCheckout Use Case', () => {
       fakeGateway,
       mockServiceRepository,
       mockStylistServiceRepository,
+      new AppointmentChargeGuard(mockPaymentRepository, fakeGateway),
     );
   });
 
@@ -158,11 +160,7 @@ describe('CreateCheckout Use Case', () => {
 
   // Debería usar la description del DTO cuando se envía explícitamente
   it('should use the given description when provided', async () => {
-    await createCheckout.execute(
-      { ...dto, description: 'Corte + color' },
-      otherPersonId,
-      'ADMIN',
-    );
+    await createCheckout.execute({ ...dto, description: 'Corte + color' }, otherPersonId, 'ADMIN');
 
     expect(fakeGateway.createCheckoutCalls[0].description).toBe('Corte + color');
   });
@@ -219,9 +217,9 @@ describe('CreateCheckout Use Case', () => {
 
     // Debería rechazar a un STYLIST que no es el asignado a la cita
     it('should reject a STYLIST who is not assigned to the appointment', async () => {
-      await expect(
-        createCheckout.execute(dto, otherPersonId, 'STYLIST'),
-      ).rejects.toThrow(ForbiddenError);
+      await expect(createCheckout.execute(dto, otherPersonId, 'STYLIST')).rejects.toThrow(
+        ForbiddenError,
+      );
       expect(mockPaymentRepository.save).not.toHaveBeenCalled();
     });
 
@@ -239,9 +237,9 @@ describe('CreateCheckout Use Case', () => {
 
     // Debería rechazar a un CLIENT que no es dueño de la cita
     it('should reject a CLIENT who does not own the appointment', async () => {
-      await expect(
-        createCheckout.execute(dto, otherPersonId, 'CLIENT'),
-      ).rejects.toThrow(ForbiddenError);
+      await expect(createCheckout.execute(dto, otherPersonId, 'CLIENT')).rejects.toThrow(
+        ForbiddenError,
+      );
       expect(mockPaymentRepository.save).not.toHaveBeenCalled();
     });
   });
@@ -390,9 +388,9 @@ describe('CreateCheckout Use Case', () => {
     it('should still throw an AppError even for a non-Error rejection', async () => {
       fakeGateway.createCheckout = jest.fn().mockRejectedValue('plain string rejection');
 
-      await expect(
-        createCheckout.execute(dto, otherPersonId, 'ADMIN'),
-      ).rejects.toBeInstanceOf(AppError);
+      await expect(createCheckout.execute(dto, otherPersonId, 'ADMIN')).rejects.toBeInstanceOf(
+        AppError,
+      );
     });
   });
 });

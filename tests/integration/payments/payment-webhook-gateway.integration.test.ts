@@ -118,7 +118,6 @@ async function mockMercadoPagoFetch(
 describe('Payment gateway webhook and sync with the Mercado Pago adapter', () => {
   const createdPaymentIds: string[] = [];
   const createdEventIds: string[] = [];
-  let appointmentId: string;
   let adminToken: string;
 
   /** Base de los identificadores de la corrida, para no chocar con corridas anteriores */
@@ -149,8 +148,12 @@ describe('Payment gateway webhook and sync with the Mercado Pago adapter', () =>
     return String(100_000_000_000 + ((runSeed * 10 + sequence) % 900_000_000_000));
   };
 
-  /** Crea un pago de pasarela PENDING, como lo deja el checkout */
+  /**
+   * Crea un pago de pasarela PENDING, como lo deja el checkout, sobre una cita
+   * confirmada nueva: la base admite un solo checkout de pasarela abierto por cita
+   */
   const createPendingGatewayPayment = async (): Promise<string> => {
+    const { id: appointmentId } = await createConfirmedTestAppointment();
     const id = generateUuid();
     await testPrisma.payment.create({
       data: {
@@ -219,8 +222,6 @@ describe('Payment gateway webhook and sync with the Mercado Pago adapter', () =>
 
   beforeAll(async () => {
     adminToken = await loginAsAdmin();
-    const appointment = await createConfirmedTestAppointment();
-    appointmentId = appointment.id;
   });
 
   beforeEach(() => {

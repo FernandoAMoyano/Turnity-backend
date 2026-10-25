@@ -6,18 +6,37 @@ import { PaymentResponseDto } from '../dto/response/PaymentResponseDto';
 import { NotFoundError } from '../../../../shared/exceptions/NotFoundError';
 import { BusinessRuleError } from '../../../../shared/exceptions/BusinessRuleError';
 import { ForbiddenError } from '../../../../shared/exceptions/ForbiddenError';
+import { AppointmentChargeGuard, ChargeConflictMessages } from '../services/AppointmentChargeGuard';
 
 /**
- * Caso de uso para procesar (completar) un pago
+ * Mensajes con los que se rechaza procesar un pago manual sobre una cita que
+ * no puede cobrarse
+ */
+const PROCESS_PAYMENT_CONFLICT_MESSAGES: ChargeConflictMessages = {
+  alreadyPaid:
+    'This appointment already has a completed payment. This payment cannot be processed.',
+  openCheckout:
+    'There is a pending checkout for this appointment. Wait for it to expire or resolve, or ask an admin to sync it, before processing a manual payment.',
+};
+
+/**
+ * Caso de uso para procesar (completar) un pago manual
  * @description Marca un pago como completado con el método de pago utilizado.
  * Aplica control de acceso por ownership: ADMIN sin restricción, STYLIST solo
  * si es el estilista asignado a la cita del pago; CLIENT no tiene acceso a
- * esta operación (fuera del alcance aprobado, ver F18)
+ * esta operación.
+ *
+ * Una cita se cobra una sola vez: el pago no se completa si la cita ya tiene
+ * otro pago completado, manual o de pasarela, ni si tiene un checkout de
+ * pasarela abierto. La regla se revisa acá aunque ya se haya revisado al crear
+ * el pago, porque entre la creación y el procesamiento el cliente pudo haber
+ * pagado online.
  */
 export class ProcessPayment {
   constructor(
     private paymentRepository: IPaymentRepository,
     private appointmentRepository: IAppointmentRepository,
+    private chargeGuard: AppointmentChargeGuard,
   ) {}
 
   /**
@@ -29,6 +48,8 @@ export class ProcessPayment {
    * @throws NotFoundError si el pago no existe, o si la cita asociada no existe
    * @throws ForbiddenError si el usuario no tiene permisos sobre la cita del pago
    * @throws BusinessRuleError si el pago no puede ser procesado
+   * @throws ConflictError si la cita ya está pagada o tiene un checkout abierto
+   * @throws AppError con status 502 si la pasarela falla al revisar un checkout vencido
    */
   async execute(
     dto: ProcessPaymentDto,
@@ -57,6 +78,14 @@ export class ProcessPayment {
     if (!payment.isPending) {
       throw new BusinessRuleError('Only pending payments can be processed');
     }
+
+    // Después del chequeo de estado: un pago ya completado que se intenta
+    // procesar de nuevo responde "solo se pueden procesar pagos pendientes",
+    // no un conflicto de cobro.
+    await this.chargeGuard.ensureAppointmentIsChargeable(
+      payment.appointmentId,
+      PROCESS_PAYMENT_CONFLICT_MESSAGES,
+    );
 
     // Marcar como completado
     payment.markAsCompleted(dto.method);

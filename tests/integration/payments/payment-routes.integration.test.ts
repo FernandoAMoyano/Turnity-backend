@@ -21,6 +21,28 @@ describe('Payments Integration Tests', () => {
   let testAppointmentId: string;
   let testPaymentId: string;
 
+  /**
+   * Crea un pago manual PENDING sobre una cita confirmada nueva
+   * @description Una cita se cobra una sola vez: si el pago se creara sobre una
+   * cita compartida con un test que ya completó otro pago, respondería 409.
+   * @param token - Token del usuario que crea el pago
+   * @param amount - Monto del pago
+   * @param appointmentOverrides - Datos de la cita; por defecto, asignada al
+   * estilista del seed que usan los tests "como estilista"
+   * @returns La respuesta de POST /api/v1/payments
+   */
+  const createPendingManualPayment = async (
+    token: string,
+    amount: number,
+    appointmentOverrides: Record<string, unknown> = { stylistId },
+  ) => {
+    const appointment = await createConfirmedTestAppointment(appointmentOverrides);
+    return request(app)
+      .post('/api/v1/payments')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ amount, appointmentId: appointment.id });
+  };
+
   beforeAll(async () => {
     // Login como admin
     adminToken = await loginAsAdmin();
@@ -611,13 +633,7 @@ describe('Payments Integration Tests', () => {
 
     beforeAll(async () => {
       // Crear un pago pendiente para procesar
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          amount: 100.0,
-          appointmentId: testAppointmentId,
-        });
+      const createResponse = await createPendingManualPayment(adminToken, 100.0);
       pendingPaymentId = createResponse.body.data.id;
     });
 
@@ -640,13 +656,7 @@ describe('Payments Integration Tests', () => {
     // Debería procesar un pago como estilista
     it('should process a payment as stylist', async () => {
       // Crear otro pago pendiente
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          amount: 80.0,
-          appointmentId: testAppointmentId,
-        });
+      const createResponse = await createPendingManualPayment(adminToken, 80.0);
 
       const response = await request(app)
         .post(`/api/v1/payments/${createResponse.body.data.id}/process`)
@@ -662,13 +672,7 @@ describe('Payments Integration Tests', () => {
 
     // Debería rechazar procesar como cliente
     it('should reject process as client', async () => {
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          amount: 60.0,
-          appointmentId: testAppointmentId,
-        });
+      const createResponse = await createPendingManualPayment(adminToken, 60.0);
 
       const response = await request(app)
         .post(`/api/v1/payments/${createResponse.body.data.id}/process`)
@@ -683,13 +687,7 @@ describe('Payments Integration Tests', () => {
 
     // Debería validar método de pago requerido
     it('should validate payment method is required', async () => {
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          amount: 50.0,
-          appointmentId: testAppointmentId,
-        });
+      const createResponse = await createPendingManualPayment(adminToken, 50.0);
 
       const response = await request(app)
         .post(`/api/v1/payments/${createResponse.body.data.id}/process`)
@@ -702,13 +700,7 @@ describe('Payments Integration Tests', () => {
 
     // Debería validar método de pago válido
     it('should validate valid payment method', async () => {
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          amount: 50.0,
-          appointmentId: testAppointmentId,
-        });
+      const createResponse = await createPendingManualPayment(adminToken, 50.0);
 
       const response = await request(app)
         .post(`/api/v1/payments/${createResponse.body.data.id}/process`)
@@ -726,13 +718,7 @@ describe('Payments Integration Tests', () => {
       const methods = ['CASH', 'DEBIT_CARD', 'TRANSFER', 'ONLINE'];
 
       for (const method of methods) {
-        const createResponse = await request(app)
-          .post('/api/v1/payments')
-          .set('Authorization', `Bearer ${adminToken}`)
-          .send({
-            amount: 25.0,
-            appointmentId: testAppointmentId,
-          });
+        const createResponse = await createPendingManualPayment(adminToken, 25.0);
 
         const response = await request(app)
           .post(`/api/v1/payments/${createResponse.body.data.id}/process`)
@@ -751,13 +737,7 @@ describe('Payments Integration Tests', () => {
 
     beforeAll(async () => {
       // Crear y procesar un pago para reembolsar
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          amount: 120.0,
-          appointmentId: testAppointmentId,
-        });
+      const createResponse = await createPendingManualPayment(adminToken, 120.0);
 
       await request(app)
         .post(`/api/v1/payments/${createResponse.body.data.id}/process`)
@@ -784,13 +764,7 @@ describe('Payments Integration Tests', () => {
     // Debería reembolsar sin razón (razón opcional)
     it('should refund without reason (reason is optional)', async () => {
       // Crear y procesar otro pago
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          amount: 90.0,
-          appointmentId: testAppointmentId,
-        });
+      const createResponse = await createPendingManualPayment(adminToken, 90.0);
 
       await request(app)
         .post(`/api/v1/payments/${createResponse.body.data.id}/process`)
@@ -809,13 +783,7 @@ describe('Payments Integration Tests', () => {
     // Debería rechazar reembolso como estilista
     it('should reject refund as stylist', async () => {
       // Crear y procesar un pago
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          amount: 70.0,
-          appointmentId: testAppointmentId,
-        });
+      const createResponse = await createPendingManualPayment(adminToken, 70.0);
 
       await request(app)
         .post(`/api/v1/payments/${createResponse.body.data.id}/process`)
@@ -833,13 +801,7 @@ describe('Payments Integration Tests', () => {
 
     // Debería rechazar reembolso de pago pendiente (error de regla de negocio)
     it('should reject refund of pending payment', async () => {
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          amount: 55.0,
-          appointmentId: testAppointmentId,
-        });
+      const createResponse = await createPendingManualPayment(adminToken, 55.0);
 
       const response = await request(app)
         .post(`/api/v1/payments/${createResponse.body.data.id}/refund`)
@@ -856,13 +818,7 @@ describe('Payments Integration Tests', () => {
   describe('POST /api/v1/payments/:id/cancel - Cancel Payment', () => {
     // Debería cancelar un pago pendiente como admin
     it('should cancel a pending payment as admin', async () => {
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          amount: 65.0,
-          appointmentId: testAppointmentId,
-        });
+      const createResponse = await createPendingManualPayment(adminToken, 65.0);
 
       const response = await request(app)
         .post(`/api/v1/payments/${createResponse.body.data.id}/cancel`)
@@ -875,13 +831,7 @@ describe('Payments Integration Tests', () => {
 
     // Debería cancelar un pago pendiente como estilista
     it('should cancel a pending payment as stylist', async () => {
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          amount: 45.0,
-          appointmentId: testAppointmentId,
-        });
+      const createResponse = await createPendingManualPayment(adminToken, 45.0);
 
       const response = await request(app)
         .post(`/api/v1/payments/${createResponse.body.data.id}/cancel`)
@@ -893,13 +843,7 @@ describe('Payments Integration Tests', () => {
 
     // Debería rechazar cancelar como cliente
     it('should reject cancel as client', async () => {
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          amount: 35.0,
-          appointmentId: testAppointmentId,
-        });
+      const createResponse = await createPendingManualPayment(adminToken, 35.0);
 
       const response = await request(app)
         .post(`/api/v1/payments/${createResponse.body.data.id}/cancel`)
@@ -911,13 +855,7 @@ describe('Payments Integration Tests', () => {
 
     // Debería rechazar cancelar pago completado (error de regla de negocio)
     it('should reject cancel of completed payment', async () => {
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          amount: 85.0,
-          appointmentId: testAppointmentId,
-        });
+      const createResponse = await createPendingManualPayment(adminToken, 85.0);
 
       await request(app)
         .post(`/api/v1/payments/${createResponse.body.data.id}/process`)
@@ -938,13 +876,7 @@ describe('Payments Integration Tests', () => {
   describe('PUT /api/v1/payments/:id - Update Payment (Admin Only)', () => {
     // Debería actualizar el monto de un pago pendiente como admin
     it('should update amount of a pending payment as admin', async () => {
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          amount: 100.0,
-          appointmentId: testAppointmentId,
-        });
+      const createResponse = await createPendingManualPayment(adminToken, 100.0);
 
       const response = await request(app)
         .put(`/api/v1/payments/${createResponse.body.data.id}`)
@@ -960,13 +892,7 @@ describe('Payments Integration Tests', () => {
 
     // Debería rechazar actualización como estilista
     it('should reject update as stylist', async () => {
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          amount: 100.0,
-          appointmentId: testAppointmentId,
-        });
+      const createResponse = await createPendingManualPayment(adminToken, 100.0);
 
       const response = await request(app)
         .put(`/api/v1/payments/${createResponse.body.data.id}`)
@@ -981,13 +907,7 @@ describe('Payments Integration Tests', () => {
 
     // Debería rechazar actualización de pago completado (error de regla de negocio)
     it('should reject update of completed payment', async () => {
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          amount: 100.0,
-          appointmentId: testAppointmentId,
-        });
+      const createResponse = await createPendingManualPayment(adminToken, 100.0);
 
       await request(app)
         .post(`/api/v1/payments/${createResponse.body.data.id}/process`)
@@ -1008,13 +928,7 @@ describe('Payments Integration Tests', () => {
 
     // Debería validar monto mayor a 0
     it('should validate amount is greater than 0', async () => {
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          amount: 100.0,
-          appointmentId: testAppointmentId,
-        });
+      const createResponse = await createPendingManualPayment(adminToken, 100.0);
 
       const response = await request(app)
         .put(`/api/v1/payments/${createResponse.body.data.id}`)
@@ -1090,12 +1004,14 @@ describe('Payments Integration Tests', () => {
       ownAppointmentId = appointment.id;
     });
 
+    /**
+     * Datos de una cita asignada a STYLIST A y al CLIENT de arriba
+     */
+    const ownAppointment = () => ({ stylistId: stylistAId, clientId, userId: clientId });
+
     // STYLIST ajeno a la cita no debe poder procesar el pago (403 vía ownership check)
     it('should reject process by a stylist who does not own the appointment', async () => {
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({ amount: 40.0, appointmentId: ownAppointmentId });
+      const createResponse = await createPendingManualPayment(adminToken, 40.0, ownAppointment());
 
       const response = await request(app)
         .post(`/api/v1/payments/${createResponse.body.data.id}/process`)
@@ -1108,10 +1024,7 @@ describe('Payments Integration Tests', () => {
 
     // STYLIST ajeno a la cita no debe poder cancelar el pago (403 vía ownership check)
     it('should reject cancel by a stylist who does not own the appointment', async () => {
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({ amount: 40.0, appointmentId: ownAppointmentId });
+      const createResponse = await createPendingManualPayment(adminToken, 40.0, ownAppointment());
 
       const response = await request(app)
         .post(`/api/v1/payments/${createResponse.body.data.id}/cancel`)
@@ -1124,10 +1037,7 @@ describe('Payments Integration Tests', () => {
     // STYLIST ajeno a la cita no puede reembolsar (la ruta ya es ADMIN-only a
     // nivel de middleware, pero se documenta el comportamiento esperado)
     it('should reject refund by a stylist who does not own the appointment', async () => {
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({ amount: 40.0, appointmentId: ownAppointmentId });
+      const createResponse = await createPendingManualPayment(adminToken, 40.0, ownAppointment());
 
       await request(app)
         .post(`/api/v1/payments/${createResponse.body.data.id}/process`)
@@ -1145,10 +1055,7 @@ describe('Payments Integration Tests', () => {
 
     // El STYLIST dueño real de la cita sí puede procesar su propio pago
     it('should allow the owning stylist to process a payment for their own appointment', async () => {
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({ amount: 40.0, appointmentId: ownAppointmentId });
+      const createResponse = await createPendingManualPayment(adminToken, 40.0, ownAppointment());
 
       const response = await request(app)
         .post(`/api/v1/payments/${createResponse.body.data.id}/process`)
@@ -1161,13 +1068,10 @@ describe('Payments Integration Tests', () => {
 
     // El CLIENT dueño de la cita gana acceso de lectura a sus pagos
     it('should allow the owning client to view payments via GET /payments/appointment/:appointmentId', async () => {
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({ amount: 40.0, appointmentId: ownAppointmentId });
+      const createResponse = await createPendingManualPayment(adminToken, 40.0, ownAppointment());
 
       const response = await request(app)
-        .get(`/api/v1/payments/appointment/${ownAppointmentId}`)
+        .get(`/api/v1/payments/appointment/${createResponse.body.data.appointmentId}`)
         .set('Authorization', `Bearer ${clientToken}`);
 
       expect(response.status).toBe(200);
@@ -1197,10 +1101,7 @@ describe('Payments Integration Tests', () => {
 
     // ADMIN mantiene acceso sin restricción, sin importar la cita
     it('should allow ADMIN unrestricted access regardless of ownership', async () => {
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({ amount: 40.0, appointmentId: ownAppointmentId });
+      const createResponse = await createPendingManualPayment(adminToken, 40.0, ownAppointment());
 
       const getResponse = await request(app)
         .get(`/api/v1/payments/${createResponse.body.data.id}`)
@@ -1286,10 +1187,7 @@ describe('Payments Integration Tests', () => {
 
     // Regresión: el camino manual sigue intacto de punta a punta
     it('should still process and refund a manual payment', async () => {
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({ amount: 60.0, appointmentId: testAppointmentId });
+      const createResponse = await createPendingManualPayment(adminToken, 60.0);
 
       const processResponse = await request(app)
         .post(`/api/v1/payments/${createResponse.body.data.id}/process`)
@@ -1325,10 +1223,7 @@ describe('Payments Integration Tests', () => {
   describe('Requests with no body on routes where every body field is optional', () => {
     // Reembolsar sin motivo es una operación válida: reason es opcional
     it('should refund with no request body at all', async () => {
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({ amount: 80.0, appointmentId: testAppointmentId });
+      const createResponse = await createPendingManualPayment(adminToken, 80.0);
 
       await request(app)
         .post(`/api/v1/payments/${createResponse.body.data.id}/process`)
@@ -1345,10 +1240,7 @@ describe('Payments Integration Tests', () => {
 
     // Actualizar sin campos no cambia nada, pero tampoco es un error
     it('should update with no request body at all', async () => {
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({ amount: 90.0, appointmentId: testAppointmentId });
+      const createResponse = await createPendingManualPayment(adminToken, 90.0);
 
       const response = await request(app)
         .put(`/api/v1/payments/${createResponse.body.data.id}`)
@@ -1406,10 +1298,7 @@ describe('Payments Integration Tests', () => {
 
     // Un pago manual no tiene estado en ningún proveedor que releer
     it('should return 422 for a manual payment', async () => {
-      const createResponse = await request(app)
-        .post('/api/v1/payments')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({ amount: 70.0, appointmentId: testAppointmentId });
+      const createResponse = await createPendingManualPayment(adminToken, 70.0);
 
       const response = await request(app)
         .post(`/api/v1/payments/${createResponse.body.data.id}/sync`)

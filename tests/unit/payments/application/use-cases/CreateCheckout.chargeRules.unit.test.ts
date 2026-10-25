@@ -1,4 +1,5 @@
 import { CreateCheckout } from '../../../../../src/modules/payments/application/use-cases/CreateCheckout';
+import { AppointmentChargeGuard } from '../../../../../src/modules/payments/application/services/AppointmentChargeGuard';
 import { IGatewayAwarePaymentRepository } from '../../../../../src/modules/payments/domain/repositories/IPaymentGatewayLookup';
 import { IAppointmentRepository } from '../../../../../src/modules/appointments/domain/repositories/IAppointmentRepository';
 import { IAppointmentStatusRepository } from '../../../../../src/modules/appointments/domain/repositories/IAppointmentStatusRepository';
@@ -159,6 +160,7 @@ describe('CreateCheckout Use Case - Reglas de cobro', () => {
       fakeGateway,
       mockServiceRepository,
       mockStylistServiceRepository,
+      new AppointmentChargeGuard(mockPaymentRepository, fakeGateway),
     );
   });
 

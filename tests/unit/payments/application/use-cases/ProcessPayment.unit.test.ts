@@ -1,7 +1,14 @@
 import { ProcessPayment } from '../../../../../src/modules/payments/application/use-cases/ProcessPayment';
+import { AppointmentChargeGuard } from '../../../../../src/modules/payments/application/services/AppointmentChargeGuard';
+import { FakePaymentGateway } from '../../fakes/FakePaymentGateway';
 import { IPaymentRepository } from '../../../../../src/modules/payments/domain/repositories/IPaymentRepository';
 import { IAppointmentRepository } from '../../../../../src/modules/appointments/domain/repositories/IAppointmentRepository';
-import { Payment, PaymentStatusEnum, PaymentMethodEnum, PaymentProviderEnum } from '../../../../../src/modules/payments/domain/entities/Payment';
+import {
+  Payment,
+  PaymentStatusEnum,
+  PaymentMethodEnum,
+  PaymentProviderEnum,
+} from '../../../../../src/modules/payments/domain/entities/Payment';
 import { NotFoundError } from '../../../../../src/shared/exceptions/NotFoundError';
 import { BusinessRuleError } from '../../../../../src/shared/exceptions/BusinessRuleError';
 import { ForbiddenError } from '../../../../../src/shared/exceptions/ForbiddenError';
@@ -41,14 +48,20 @@ describe('ProcessPayment Use Case', () => {
       findById: jest.fn(),
     } as unknown as jest.Mocked<IAppointmentRepository>;
 
-    processPayment = new ProcessPayment(mockPaymentRepository, mockAppointmentRepository);
+    mockPaymentRepository.findByAppointmentId.mockResolvedValue([]);
+
+    processPayment = new ProcessPayment(
+      mockPaymentRepository,
+      mockAppointmentRepository,
+      new AppointmentChargeGuard(mockPaymentRepository, new FakePaymentGateway()),
+    );
   });
 
   // Debería procesar un pago pendiente exitosamente
   it('should process a pending payment successfully', async () => {
     const pendingPayment = new Payment({
       id: '123e4567-e89b-12d3-a456-426614174000',
-      amount: 100.00,
+      amount: 100.0,
       status: PaymentStatusEnum.PENDING,
       method: null,
       paymentDate: null,
@@ -97,7 +110,7 @@ describe('ProcessPayment Use Case', () => {
   it('should throw BusinessRuleError if payment is not pending', async () => {
     const completedPayment = new Payment({
       id: '123e4567-e89b-12d3-a456-426614174000',
-      amount: 100.00,
+      amount: 100.0,
       status: PaymentStatusEnum.COMPLETED,
       method: PaymentMethodEnum.CASH,
       paymentDate: new Date(),
@@ -135,7 +148,7 @@ describe('ProcessPayment Use Case', () => {
     for (const method of methods) {
       const pendingPayment = new Payment({
         id: `payment-${method}`,
-        amount: 100.00,
+        amount: 100.0,
         status: PaymentStatusEnum.PENDING,
         method: null,
         paymentDate: null,
@@ -165,7 +178,7 @@ describe('ProcessPayment Use Case', () => {
   it('should not process an already refunded payment', async () => {
     const refundedPayment = new Payment({
       id: '123e4567-e89b-12d3-a456-426614174000',
-      amount: 100.00,
+      amount: 100.0,
       status: PaymentStatusEnum.REFUNDED,
       method: PaymentMethodEnum.CREDIT_CARD,
       paymentDate: new Date(),
@@ -192,7 +205,7 @@ describe('ProcessPayment Use Case', () => {
   it('should not process a failed payment', async () => {
     const failedPayment = new Payment({
       id: '123e4567-e89b-12d3-a456-426614174000',
-      amount: 100.00,
+      amount: 100.0,
       status: PaymentStatusEnum.FAILED,
       method: null,
       paymentDate: null,
@@ -215,7 +228,7 @@ describe('ProcessPayment Use Case', () => {
     ).rejects.toThrow(BusinessRuleError);
   });
 
-  describe('Ownership (F18)', () => {
+  describe('Ownership', () => {
     // Payment.markAsCompleted() muta la entidad en el lugar, así que cada test
     // necesita su propia instancia -- reusar una sola entre tests contaminaría
     // el estado (un test la deja COMPLETED y el siguiente ya no puede procesarla)
@@ -224,7 +237,7 @@ describe('ProcessPayment Use Case', () => {
     beforeEach(() => {
       pendingPayment = new Payment({
         id: '123e4567-e89b-12d3-a456-426614174099',
-        amount: 100.00,
+        amount: 100.0,
         status: PaymentStatusEnum.PENDING,
         method: null,
         paymentDate: null,
