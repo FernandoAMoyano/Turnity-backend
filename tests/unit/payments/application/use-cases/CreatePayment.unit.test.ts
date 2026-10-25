@@ -1,4 +1,6 @@
 import { CreatePayment } from '../../../../../src/modules/payments/application/use-cases/CreatePayment';
+import { AppointmentChargeGuard } from '../../../../../src/modules/payments/application/services/AppointmentChargeGuard';
+import { FakePaymentGateway } from '../../fakes/FakePaymentGateway';
 import { IPaymentRepository } from '../../../../../src/modules/payments/domain/repositories/IPaymentRepository';
 import { IAppointmentRepository } from '../../../../../src/modules/appointments/domain/repositories/IAppointmentRepository';
 import { IAppointmentStatusRepository } from '../../../../../src/modules/appointments/domain/repositories/IAppointmentStatusRepository';
@@ -85,10 +87,13 @@ describe('CreatePayment Use Case', () => {
     mockAppointmentRepository.findById.mockResolvedValue(mockAppointment as any);
     mockAppointmentStatusRepository.findById.mockResolvedValue(mockConfirmedStatus as any);
 
+    mockPaymentRepository.findByAppointmentId.mockResolvedValue([]);
+
     createPayment = new CreatePayment(
       mockPaymentRepository,
       mockAppointmentRepository,
       mockAppointmentStatusRepository,
+      new AppointmentChargeGuard(mockPaymentRepository, new FakePaymentGateway()),
     );
   });
 
@@ -218,7 +223,7 @@ describe('CreatePayment Use Case', () => {
     expect(mockPaymentRepository.save).toHaveBeenCalledTimes(1);
   });
 
-  describe('PAY-25: Ownership Validation', () => {
+  describe('Ownership Validation', () => {
     const stylistId = mockAppointment.userId; // reutilizamos un UUID válido del fixture
     const otherStylistId = '123e4567-e89b-12d3-a456-426614174099';
 

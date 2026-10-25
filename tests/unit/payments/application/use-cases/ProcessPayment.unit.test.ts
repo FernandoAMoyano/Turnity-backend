@@ -1,4 +1,6 @@
 import { ProcessPayment } from '../../../../../src/modules/payments/application/use-cases/ProcessPayment';
+import { AppointmentChargeGuard } from '../../../../../src/modules/payments/application/services/AppointmentChargeGuard';
+import { FakePaymentGateway } from '../../fakes/FakePaymentGateway';
 import { IPaymentRepository } from '../../../../../src/modules/payments/domain/repositories/IPaymentRepository';
 import { IAppointmentRepository } from '../../../../../src/modules/appointments/domain/repositories/IAppointmentRepository';
 import { Payment, PaymentStatusEnum, PaymentMethodEnum, PaymentProviderEnum } from '../../../../../src/modules/payments/domain/entities/Payment';
@@ -41,7 +43,13 @@ describe('ProcessPayment Use Case', () => {
       findById: jest.fn(),
     } as unknown as jest.Mocked<IAppointmentRepository>;
 
-    processPayment = new ProcessPayment(mockPaymentRepository, mockAppointmentRepository);
+    mockPaymentRepository.findByAppointmentId.mockResolvedValue([]);
+
+    processPayment = new ProcessPayment(
+      mockPaymentRepository,
+      mockAppointmentRepository,
+      new AppointmentChargeGuard(mockPaymentRepository, new FakePaymentGateway()),
+    );
   });
 
   // Debería procesar un pago pendiente exitosamente
@@ -215,7 +223,7 @@ describe('ProcessPayment Use Case', () => {
     ).rejects.toThrow(BusinessRuleError);
   });
 
-  describe('Ownership (F18)', () => {
+  describe('Ownership', () => {
     // Payment.markAsCompleted() muta la entidad en el lugar, así que cada test
     // necesita su propia instancia -- reusar una sola entre tests contaminaría
     // el estado (un test la deja COMPLETED y el siguiente ya no puede procesarla)
