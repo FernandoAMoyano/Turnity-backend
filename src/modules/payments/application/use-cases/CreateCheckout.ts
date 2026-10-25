@@ -2,8 +2,7 @@ import { generateUuid } from '../../../../shared/utils/uuid';
 import { centsToAmount } from '../../../../shared/utils/money';
 import { Payment, PaymentProviderEnum } from '../../domain/entities/Payment';
 import { IGatewayAwarePaymentRepository } from '../../domain/repositories/IPaymentGatewayLookup';
-import { IPaymentGateway, GatewayPaymentSnapshot } from '../../domain/gateways/IPaymentGateway';
-import { PaymentStatusMapper } from '../../domain/services/PaymentStatusMapper';
+import { IPaymentGateway } from '../../domain/gateways/IPaymentGateway';
 import { AppointmentPriceCalculator } from '../../domain/services/AppointmentPriceCalculator';
 import { Appointment } from '../../../appointments/domain/entities/Appointment';
 import { IAppointmentRepository } from '../../../appointments/domain/repositories/IAppointmentRepository';
@@ -14,16 +13,21 @@ import { IStylistServiceRepository } from '../../../services/domain/repositories
 import { CreateCheckoutDto } from '../dto/request/CreateCheckoutDto';
 import { CheckoutResponseDto } from '../dto/response/CheckoutResponseDto';
 import { translateGatewayFailure } from '../errors/translateGatewayFailure';
+import { AppointmentChargeGuard, ChargeConflictMessages } from '../services/AppointmentChargeGuard';
 import { NotFoundError } from '../../../../shared/exceptions/NotFoundError';
 import { BusinessRuleError } from '../../../../shared/exceptions/BusinessRuleError';
 import { ForbiddenError } from '../../../../shared/exceptions/ForbiddenError';
-import { ConflictError } from '../../../../shared/exceptions/ConflictError';
 import { logger } from '../../../../shared/logger/logger';
 
 /**
- * Motivo con el que se cierra un checkout que venció sin pago en la pasarela
+ * Mensajes con los que se rechaza abrir un checkout sobre una cita que no
+ * puede cobrarse
  */
-const EXPIRED_CHECKOUT_REASON = 'Checkout expired without a payment at the payment gateway';
+const CHECKOUT_CONFLICT_MESSAGES: ChargeConflictMessages = {
+  alreadyPaid: 'This appointment already has a completed payment. A new checkout cannot be opened.',
+  openCheckout:
+    'There is already a pending checkout for this appointment. Wait for it to expire or resolve, or ask an admin to sync it.',
+};
 
 /**
  * Caso de uso para abrir un checkout contra la pasarela de pago
@@ -51,6 +55,7 @@ export class CreateCheckout {
     private paymentGateway: IPaymentGateway,
     private serviceRepository: IServiceRepository,
     private stylistServiceRepository: IStylistServiceRepository,
+    private chargeGuard: AppointmentChargeGuard,
   ) {}
 
   /**
@@ -167,7 +172,10 @@ export class CreateCheckout {
     appointment: Appointment,
     idempotencyKey: string,
   ): Promise<Payment> {
-    await this.ensureAppointmentIsChargeable(appointment.id);
+    await this.chargeGuard.ensureAppointmentIsChargeable(
+      appointment.id,
+      CHECKOUT_CONFLICT_MESSAGES,
+    );
 
     const amount = await this.calculateAmount(appointment);
 
@@ -180,96 +188,6 @@ export class CreateCheckout {
     );
 
     return this.paymentRepository.save(payment);
-  }
-
-  /**
-   * Verifica que la cita no esté pagada ni tenga otro checkout abierto
-   * @description Dos preferencias abiertas a la vez sobre la misma cita son un
-   * doble cobro desde la perspectiva del cliente, aunque cada pago sea
-   * individualmente idempotente. Un pago completado bloquea sea manual o de
-   * pasarela; uno reembolsado o fallido no bloquea. Un checkout de pasarela
-   * vencido se revisa contra la pasarela antes de dejar de contarlo.
-   * @throws ConflictError si la cita ya está pagada o ya tiene un checkout abierto
-   * @throws AppError con status 502 si la pasarela falla al revisar un checkout vencido
-   */
-  private async ensureAppointmentIsChargeable(appointmentId: string): Promise<void> {
-    const paymentsForAppointment = await this.paymentRepository.findByAppointmentId(appointmentId);
-
-    if (paymentsForAppointment.some((payment) => payment.isCompleted)) {
-      throw this.alreadyPaidError();
-    }
-
-    const openCheckouts = paymentsForAppointment.filter(
-      (payment) => payment.isGatewayBacked && payment.isPending,
-    );
-
-    for (const openCheckout of openCheckouts) {
-      if (!openCheckout.hasCheckoutExpired()) {
-        throw this.openCheckoutError();
-      }
-
-      await this.closeExpiredCheckout(openCheckout);
-
-      if (openCheckout.isCompleted) {
-        throw this.alreadyPaidError();
-      }
-      if (openCheckout.isPending) {
-        throw this.openCheckoutError();
-      }
-    }
-  }
-
-  /**
-   * Revisa contra la pasarela un checkout vencido y deja el pago local al día
-   * @description Que la preferencia haya vencido no garantiza que nadie la
-   * haya pagado: un pago enviado a último momento, o uno que quedó en proceso,
-   * puede existir del lado de la pasarela sin que haya llegado la
-   * notificación. Si la pasarela tiene un pago para este checkout, se aplica
-   * su estado. Si no tiene ninguno, el pago local se marca FAILED. Si después
-   * llega una aprobación tardía, el webhook todavía puede pasarlo a COMPLETED.
-   * @param payment - Pago de pasarela PENDING con el checkout vencido
-   * @throws AppError con status 502 si la pasarela falla
-   */
-  private async closeExpiredCheckout(payment: Payment): Promise<void> {
-    let snapshot: GatewayPaymentSnapshot | null;
-    try {
-      snapshot = payment.gatewayPaymentId
-        ? await this.paymentGateway.getPayment(payment.gatewayPaymentId)
-        : await this.paymentGateway.findPaymentByExternalReference(payment.id);
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : 'Unknown gateway error';
-      logger.error('[CreateCheckout] La pasarela falló al revisar un checkout vencido', {
-        paymentId: payment.id,
-        reason,
-      });
-
-      throw translateGatewayFailure(error, {
-        retryable:
-          'The payment gateway did not respond while checking an expired checkout for this appointment. Please try again later.',
-        rejected:
-          'The payment gateway rejected the request to check an expired checkout for this appointment.',
-      });
-    }
-
-    if (snapshot) {
-      payment.applyGatewayStatus({
-        status: PaymentStatusMapper.toInternalStatus(snapshot.status),
-        gatewayStatus: snapshot.status,
-        gatewayPaymentId: snapshot.gatewayPaymentId,
-        failureReason: snapshot.statusDetail,
-        refundedAmount: snapshot.refundedAmount,
-      });
-    } else {
-      payment.markAsFailed(EXPIRED_CHECKOUT_REASON);
-    }
-
-    await this.paymentRepository.update(payment);
-
-    logger.info('[CreateCheckout] Checkout vencido revisado contra la pasarela', {
-      paymentId: payment.id,
-      gatewayStatus: snapshot?.status,
-      status: payment.status,
-    });
   }
 
   /**
@@ -302,18 +220,6 @@ export class CreateCheckout {
     }
 
     return centsToAmount(totalInCents);
-  }
-
-  private alreadyPaidError(): ConflictError {
-    return new ConflictError(
-      'This appointment already has a completed payment. A new checkout cannot be opened.',
-    );
-  }
-
-  private openCheckoutError(): ConflictError {
-    return new ConflictError(
-      'There is already a pending checkout for this appointment. Wait for it to expire or resolve, or ask an admin to sync it.',
-    );
   }
 
   /**

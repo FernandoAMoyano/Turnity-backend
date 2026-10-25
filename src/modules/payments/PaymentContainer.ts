@@ -21,6 +21,9 @@ import { PrismaStylistServiceRepository } from '../services/infrastructure/persi
 import { IPaymentGateway } from './domain/gateways/IPaymentGateway';
 import { createPaymentGateway } from './infrastructure/gateways/PaymentGatewayFactory';
 
+// Servicios de aplicación
+import { AppointmentChargeGuard } from './application/services/AppointmentChargeGuard';
+
 // Use Cases
 import { CreatePayment } from './application/use-cases/CreatePayment';
 import { CreateCheckout } from './application/use-cases/CreateCheckout';
@@ -68,6 +71,9 @@ export class PaymentContainer {
 
   // Gateway de pago
   private _paymentGateway: IPaymentGateway;
+
+  // Servicios de aplicación
+  private _appointmentChargeGuard: AppointmentChargeGuard;
 
   // Use Cases
   private _createPayment: CreatePayment;
@@ -130,7 +136,13 @@ export class PaymentContainer {
     // 2. Resolver el gateway de pago (la factory es el único punto que elige el adapter)
     this._paymentGateway = createPaymentGateway();
 
-    // 3. Inicializar use cases
+    // 3. Inicializar servicios de aplicación
+    this._appointmentChargeGuard = new AppointmentChargeGuard(
+      this._paymentRepository,
+      this._paymentGateway,
+    );
+
+    // 4. Inicializar use cases
     this._createPayment = new CreatePayment(
       this._paymentRepository,
       this._appointmentRepository,
@@ -143,6 +155,7 @@ export class PaymentContainer {
       this._paymentGateway,
       this._serviceRepository,
       this._stylistServiceRepository,
+      this._appointmentChargeGuard,
     );
     this._handleGatewayWebhook = new HandleGatewayWebhook(
       this._paymentRepository,
@@ -172,7 +185,7 @@ export class PaymentContainer {
     this._getPaymentStatistics = new GetPaymentStatistics(this._paymentRepository);
     this._updatePayment = new UpdatePayment(this._paymentRepository);
 
-    // 4. Inicializar controller
+    // 5. Inicializar controller
     this._paymentController = new PaymentController(
       this._createPayment,
       this._createCheckout,
@@ -189,7 +202,7 @@ export class PaymentContainer {
 
     this._paymentWebhookController = new PaymentWebhookController(this._handleGatewayWebhook);
 
-    // 5. Inicializar routes
+    // 6. Inicializar routes
     this._paymentRoutes = new PaymentRoutes(
       this._paymentController,
       this.authMiddleware,
