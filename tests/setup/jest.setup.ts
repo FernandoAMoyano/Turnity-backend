@@ -12,6 +12,13 @@ process.env.NODE_ENV = 'test';
 // antes de dotenv/env.ts; en produccion el flag esta prohibido (validado en env.ts).
 process.env.EXPOSE_VERIFICATION_TOKENS = 'true';
 
+// La suite corre siempre contra la pasarela inerte (NoopPaymentGateway), igual
+// que en CI, aunque el .env local tenga Mercado Pago configurado para probar
+// contra el sandbox: los tests asertan las respuestas del Noop y ninguno debe
+// salir a la red. El test de webhook arma su propio MercadoPagoGateway sobre
+// un proveedor HTTP simulado, así que no depende de esta variable.
+process.env.PAYMENT_GATEWAY_PROVIDER = 'none';
+
 import dotenv from 'dotenv';
 
 // dotenv.config() no sobreescribe variables ya presentes en process.env por defecto,
