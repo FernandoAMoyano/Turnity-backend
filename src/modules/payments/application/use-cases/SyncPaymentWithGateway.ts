@@ -1,8 +1,8 @@
-import { Payment } from '../../domain/entities/Payment';
 import { IPaymentRepository } from '../../domain/repositories/IPaymentRepository';
 import { PaymentStatusMapper } from '../../domain/services/PaymentStatusMapper';
 import { IPaymentGateway, GatewayPaymentSnapshot } from '../../domain/gateways/IPaymentGateway';
 import { PaymentResponseDto } from '../dto/response/PaymentResponseDto';
+import { toPaymentResponseDto } from '../mappers/toPaymentResponseDto';
 import { NotFoundError } from '../../../../shared/exceptions/NotFoundError';
 import { BusinessRuleError } from '../../../../shared/exceptions/BusinessRuleError';
 import { translateGatewayFailure } from '../errors/translateGatewayFailure';
@@ -108,7 +108,7 @@ export class SyncPaymentWithGateway {
     }
 
     return {
-      payment: this.toResponseDto(updatedPayment),
+      payment: toPaymentResponseDto(updatedPayment),
       changed: transition === 'applied',
     };
   }
@@ -194,26 +194,5 @@ export class SyncPaymentWithGateway {
         rejected: 'The payment gateway rejected the request to read the payment.',
       });
     }
-  }
-
-  private toResponseDto(payment: Payment): PaymentResponseDto {
-    return {
-      id: payment.id,
-      amount: payment.amount,
-      status: payment.status,
-      method: payment.method,
-      paymentDate: payment.paymentDate,
-      appointmentId: payment.appointmentId,
-      refundReason: payment.refundReason,
-      createdAt: payment.createdAt,
-      updatedAt: payment.updatedAt,
-      provider: payment.provider,
-      gatewayPaymentId: payment.gatewayPaymentId,
-      gatewayStatus: payment.gatewayStatus,
-      refundedAmount: payment.refundedAmount,
-      gatewayRefundId: payment.gatewayRefundId,
-      failureReason: payment.failureReason,
-      lastSyncedAt: payment.lastSyncedAt,
-    };
   }
 }
