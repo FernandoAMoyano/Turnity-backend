@@ -1913,7 +1913,7 @@ paths:
       description: >
         Lista todos los pagos asociados a una cita específica. Accesible para
         ADMIN sin restricción; STYLIST solo si es el estilista asignado a la
-        cita; CLIENT solo si es el cliente o el creador de la cita (F18). El
+        cita; CLIENT solo si es el cliente o el creador de la cita. El
         404 aplica cuando STYLIST/CLIENT consultan una cita inexistente (ADMIN
         no valida existencia de la cita y obtiene lista vacía en ese caso).
       parameters:
@@ -1959,7 +1959,7 @@ paths:
       summary: Obtener pago por ID
       description: >
         Accesible para ADMIN sin restricción; STYLIST solo si es el estilista
-        asignado a la cita del pago (F18).
+        asignado a la cita del pago.
       parameters:
         - name: id
           in: path
@@ -2241,7 +2241,7 @@ paths:
       description: >
         Cancela un pago pendiente. Solo se pueden cancelar pagos con estado
         PENDING. STYLIST solo puede cancelar pagos de citas donde es el
-        estilista asignado (F18).
+        estilista asignado.
       parameters:
         - name: id
           in: path
