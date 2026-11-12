@@ -54,10 +54,10 @@ export interface PaymentResponseDto {
    */
   updatedAt: Date;
 
-  // Campos de pasarela. Todos opcionales y aditivos: un pago manual no tiene
-  // ninguno, y los consumidores que ya existían no ven ningún cambio. Hoy los
-  // completan los dos casos de uso que hablan con la pasarela (reembolso y
-  // sincronización); el resto de los endpoints los sigue omitiendo.
+  // Campos de pasarela. Todos opcionales y aditivos: un pago manual solo tiene
+  // `provider`, y los consumidores que ya existían no ven ningún cambio. Los
+  // completan las lecturas de un pago (por id y por cita), el reembolso y la
+  // sincronización; el resto de los endpoints los sigue omitiendo.
   // Nunca se expone `idempotencyKey`: es una credencial de deduplicación.
 
   /**
@@ -94,4 +94,17 @@ export interface PaymentResponseDto {
    * Momento de la última relectura del estado contra la pasarela
    */
   lastSyncedAt?: Date;
+
+  /**
+   * URL de checkout hospedado a la que se redirige al pagador
+   * @description Permite volver a llevar al pagador a un checkout abierto, por
+   * ejemplo si cerró la página de pago antes de terminar.
+   */
+  checkoutUrl?: string;
+
+  /**
+   * Vencimiento efectivo del checkout: el que informó la pasarela al crearlo
+   * o, si no lo informó, el que asume el servidor
+   */
+  checkoutExpiresAt?: Date;
 }
