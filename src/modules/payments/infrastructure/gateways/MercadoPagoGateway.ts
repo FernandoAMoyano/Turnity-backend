@@ -519,8 +519,8 @@ export class MercadoPagoGateway implements IPaymentGateway {
    * a propósito: `@types/node` expone `fetch`/`RequestInit`/`Response` como
    * globales (vía `undici-types`), pero no promueve `HeadersInit` al
    * namespace global -- referenciarlo por nombre revienta la compilación sin
-   * agregar `"dom"` a `tsconfig.json` (cambio global del proyecto, fuera de
-   * esta fase). Un `Record<string, string>` es estructuralmente compatible
+   * agregar `"dom"` a `tsconfig.json` (un cambio global del proyecto). Un
+   * `Record<string, string>` es estructuralmente compatible
    * con lo que espera `fetch`.
    * @param idempotencyKey - Clave de idempotencia opcional (`string | undefined`).
    * La pasan `createCheckout` y `refund` (cada uno con la suya); `getPayment`

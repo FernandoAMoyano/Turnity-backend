@@ -13,7 +13,7 @@ import { BusinessRuleError } from '../../../../shared/exceptions/BusinessRuleErr
  * Implementación inerte del puerto de pasarela
  * @description Activa cuando `PAYMENT_GATEWAY_PROVIDER=none`. Es lo que
  * mantiene el proyecto arrancable sin credenciales -- dev, CI, cualquiera que
- * clone el repo (2.3 del plan). `createCheckout` y `refund` fallan con
+ * clone el repo. `createCheckout` y `refund` fallan con
  * `BusinessRuleError` (422: es una regla de negocio -- "no hay pasarela
  * configurada" -- no un error técnico). `verifyWebhookSignature` devuelve
  * `false` siempre, así que el endpoint de webhook queda inerte (401) sin

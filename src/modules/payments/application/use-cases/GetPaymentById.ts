@@ -11,7 +11,7 @@ import { ForbiddenError } from '../../../../shared/exceptions/ForbiddenError';
  * por ownership sobre la cita asociada: ADMIN sin restricción, STYLIST solo
  * pagos de citas donde es el estilista asignado. CLIENT nunca llega a este use
  * case: `GET /payments/:id` solo permite ADMIN/STYLIST a nivel de ruta; el
- * CLIENT accede a sus pagos únicamente vía `GET /payments/appointment/:id` (F18)
+ * CLIENT accede a sus pagos únicamente vía `GET /payments/appointment/:id`
  */
 export class GetPaymentById {
   constructor(
@@ -76,7 +76,7 @@ export class GetPaymentById {
     // CLIENT (y cualquier otro rol): bloqueado sin resolver la cita. En la
     // práctica CLIENT nunca llega aquí porque `GET /payments/:id` solo autoriza
     // ADMIN/STYLIST en la ruta; el CLIENT accede a sus pagos vía
-    // `GET /payments/appointment/:id` (F18), donde sí se valida su ownership.
+    // `GET /payments/appointment/:id`, donde sí se valida su ownership.
     throw new ForbiddenError('You can only access payments for your own appointments');
   }
 }
