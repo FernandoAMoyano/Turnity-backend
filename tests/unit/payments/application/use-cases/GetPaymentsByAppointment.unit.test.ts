@@ -89,7 +89,7 @@ describe('GetPaymentsByAppointment Use Case', () => {
     expect(result).toEqual([]);
   });
 
-  describe('Ownership (F18)', () => {
+  describe('Ownership', () => {
     // Debería permitir a ADMIN consultar pagos de cualquier cita sin resolverla
     it('should allow ADMIN to query any appointment without resolving it', async () => {
       mockPaymentRepository.findByAppointmentId.mockResolvedValue(mockPayments);

@@ -126,7 +126,7 @@ describe('GetPaymentById Use Case', () => {
     expect(result.paymentDate).toBeNull();
   });
 
-  describe('Ownership (F18)', () => {
+  describe('Ownership', () => {
     // Debería permitir a ADMIN ver cualquier pago sin necesidad de resolver la cita
     it('should allow ADMIN to view any payment without resolving the appointment', async () => {
       mockPaymentRepository.findById.mockResolvedValue(mockPayment);
@@ -160,7 +160,7 @@ describe('GetPaymentById Use Case', () => {
 
     // CLIENT nunca llega a este use case en producción (GET /payments/:id solo
     // autoriza ADMIN/STYLIST en la ruta); el use case igual debe bloquearlo si
-    // se invoca directamente, sin resolver la cita (hallazgo #2, Opción A)
+    // se invoca directamente, sin resolver la cita
     it('should throw ForbiddenError for CLIENT without resolving the appointment', async () => {
       mockPaymentRepository.findById.mockResolvedValue(mockPayment);
 

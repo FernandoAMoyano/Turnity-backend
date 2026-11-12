@@ -237,7 +237,7 @@ describe('RefundPayment Use Case', () => {
     expect(result.amount).toBe(150.00);
   });
 
-  describe('Ownership (F18)', () => {
+  describe('Ownership', () => {
     // Payment.refund() muta la entidad en el lugar, así que cada test necesita
     // su propia instancia -- reusar una sola entre tests contaminaría el
     // estado (un test la deja REFUNDED y el siguiente ya no puede reembolsarla)

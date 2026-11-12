@@ -187,7 +187,7 @@ describe('CancelPayment Use Case', () => {
     expect(result.paymentDate).toBeNull();
   });
 
-  describe('Ownership (F18)', () => {
+  describe('Ownership', () => {
     // Payment.markAsFailed() muta la entidad en el lugar, así que cada test
     // necesita su propia instancia -- reusar una sola entre tests contaminaría
     // el estado (un test la deja FAILED y el siguiente ya no puede cancelarla)
