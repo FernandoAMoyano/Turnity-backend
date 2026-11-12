@@ -41,6 +41,8 @@ export interface IPaymentRepository {
    * Guarda un nuevo pago
    * @param payment - Entidad de pago a guardar
    * @returns El pago guardado
+   * @throws ConflictError si la cita ya tiene un checkout de pasarela abierto
+   * @throws DuplicateIdempotencyKeyError si otro pago ya tiene la misma clave de idempotencia
    */
   save(payment: Payment): Promise<Payment>;
 

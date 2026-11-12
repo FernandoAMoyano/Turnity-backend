@@ -19,6 +19,7 @@ import {
 } from '../../domain/repositories/IPaymentRepository';
 import { IPaymentGatewayLookup } from '../../domain/repositories/IPaymentGatewayLookup';
 import { ConflictError } from '../../../../shared/exceptions/ConflictError';
+import { DuplicateIdempotencyKeyError } from '../../domain/errors/DuplicateIdempotencyKeyError';
 
 /**
  * Código de error de Prisma para violación de restricción única
@@ -36,8 +37,11 @@ export class PrismaPaymentRepository implements IPaymentRepository, IPaymentGate
    * @description Si dos pedidos abren un checkout sobre la misma cita al mismo
    * tiempo, los dos pasan la verificación de cobro único antes de que alguno
    * guarde su pago. El índice único parcial de la base resuelve esa carrera:
-   * el segundo `create` falla y se traduce a un conflicto.
+   * el segundo `create` falla y se traduce a un conflicto. Lo mismo pasa con
+   * dos pedidos que llegan al mismo tiempo con la misma clave de idempotencia:
+   * la restricción única de `idempotencyKey` rechaza el segundo.
    * @throws ConflictError si la cita ya tiene un checkout de pasarela abierto
+   * @throws DuplicateIdempotencyKeyError si otro pago ya tiene la misma clave de idempotencia
    */
   async save(payment: Payment): Promise<Payment> {
     try {
@@ -47,6 +51,9 @@ export class PrismaPaymentRepository implements IPaymentRepository, IPaymentGate
         throw new ConflictError(
           'There is already a pending checkout for this appointment. Wait for it to expire or resolve, or ask an admin to sync it.',
         );
+      }
+      if (this.isDuplicateIdempotencyKeyViolation(error)) {
+        throw new DuplicateIdempotencyKeyError();
       }
       throw error;
     }
@@ -91,6 +98,26 @@ export class PrismaPaymentRepository implements IPaymentRepository, IPaymentGate
    * ambigüedad: es la única restricción única sobre esa columna.
    */
   private isOpenGatewayCheckoutViolation(error: unknown): boolean {
+    return this.isUniqueViolationOn(error, 'appointmentId');
+  }
+
+  /**
+   * Indica si el error es una violación de la restricción única de `idempotencyKey`
+   * @description Si un mismo pago viola a la vez esta restricción y el índice de
+   * checkout abierto, PostgreSQL informa esta.
+   */
+  private isDuplicateIdempotencyKeyViolation(error: unknown): boolean {
+    return this.isUniqueViolationOn(error, 'idempotencyKey');
+  }
+
+  /**
+   * Indica si el error es una violación de una restricción única sobre una sola columna
+   * @description Prisma informa en `meta.target` la lista de columnas de la
+   * restricción violada.
+   * @param error - Error lanzado por Prisma
+   * @param column - Única columna que debe tener la restricción
+   */
+  private isUniqueViolationOn(error: unknown, column: string): boolean {
     if (
       !(error instanceof Prisma.PrismaClientKnownRequestError) ||
       error.code !== UNIQUE_CONSTRAINT_VIOLATION
@@ -99,7 +126,7 @@ export class PrismaPaymentRepository implements IPaymentRepository, IPaymentGate
     }
 
     const target = error.meta?.target;
-    return Array.isArray(target) && target.length === 1 && target[0] === 'appointmentId';
+    return Array.isArray(target) && target.length === 1 && target[0] === column;
   }
 
   /**
