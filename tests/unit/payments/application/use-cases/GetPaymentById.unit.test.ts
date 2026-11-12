@@ -1,7 +1,12 @@
 import { GetPaymentById } from '../../../../../src/modules/payments/application/use-cases/GetPaymentById';
 import { IPaymentRepository } from '../../../../../src/modules/payments/domain/repositories/IPaymentRepository';
 import { IAppointmentRepository } from '../../../../../src/modules/appointments/domain/repositories/IAppointmentRepository';
-import { Payment, PaymentStatusEnum, PaymentMethodEnum } from '../../../../../src/modules/payments/domain/entities/Payment';
+import {
+  Payment,
+  PaymentStatusEnum,
+  PaymentMethodEnum,
+  PaymentProviderEnum,
+} from '../../../../../src/modules/payments/domain/entities/Payment';
 import { NotFoundError } from '../../../../../src/shared/exceptions/NotFoundError';
 import { ForbiddenError } from '../../../../../src/shared/exceptions/ForbiddenError';
 
@@ -95,6 +100,7 @@ describe('GetPaymentById Use Case', () => {
       appointmentId: mockPayment.appointmentId,
       createdAt: mockPayment.createdAt,
       updatedAt: mockPayment.updatedAt,
+      provider: PaymentProviderEnum.MANUAL,
     });
   });
 
