@@ -1735,7 +1735,12 @@ paths:
             type: string
             format: uuid
             example: "8f14e45f-ceea-4e7a-9a0b-1c2d3e4f5a6b"
-          description: "Clave de idempotencia. Un reintento con la misma clave devuelve el checkout ya creado (200) en vez de abrir otro"
+          description: >
+            Clave de idempotencia. Repetir el pedido con la misma clave devuelve el checkout ya creado (200)
+            en vez de abrir otro. Cada clave corresponde a una cita y a un intento: usarla con otra cita
+            responde 422, y si el checkout de esa clave no se pudo crear (502), para reintentar hace falta una
+            clave nueva (422 con la misma). Si otro pedido con la misma clave todavía está creando el
+            checkout, responde 409: conviene reintentar en unos segundos.
       requestBody:
         required: true
         content:
@@ -1798,27 +1803,61 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '409':
-          description: La cita ya tiene un pago completado o un checkout de pasarela abierto
+          description: >
+            La cita ya tiene un pago completado o un checkout de pasarela abierto, o otro pedido con la misma
+            Idempotency-Key todavía está creando el checkout
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-              example:
-                success: false
-                message: "This appointment already has a completed payment. A new checkout cannot be opened."
-                code: "CONFLICT"
+              examples:
+                alreadyPaid:
+                  summary: La cita ya está pagada
+                  value:
+                    success: false
+                    message: "This appointment already has a completed payment. A new checkout cannot be opened."
+                    code: "CONFLICT"
+                beingCreated:
+                  summary: Otro pedido con la misma clave está creando el checkout
+                  value:
+                    success: false
+                    message: "A checkout with this Idempotency-Key is still being created. Retry the request in a few seconds."
+                    code: "CONFLICT"
         '422':
-          description: La cita no está confirmada ni completada, no tiene servicios que cobrar, o la pasarela no está configurada
+          description: >
+            La cita no está confirmada ni completada, no tiene servicios que cobrar, o la pasarela no está
+            configurada. También cuando la Idempotency-Key ya se usó para otra cita o pertenece a un checkout
+            que no se pudo crear
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-              example:
-                success: false
-                message: "Cannot create a checkout for an appointment without services to charge"
-                code: "BUSINESS_RULE_ERROR"
+              examples:
+                noServices:
+                  summary: La cita no tiene servicios que cobrar
+                  value:
+                    success: false
+                    message: "Cannot create a checkout for an appointment without services to charge"
+                    code: "BUSINESS_RULE_ERROR"
+                keyOfAnotherAppointment:
+                  summary: La clave ya se usó para otra cita
+                  value:
+                    success: false
+                    message: "This Idempotency-Key was already used for another appointment. Use a new key."
+                    code: "BUSINESS_RULE_ERROR"
+                keyOfFailedCheckout:
+                  summary: El checkout de la clave no se pudo crear
+                  value:
+                    success: false
+                    message: "This Idempotency-Key belongs to a checkout that could not be created. Use a new key to try again."
+                    code: "BUSINESS_RULE_ERROR"
         '502':
-          description: La pasarela falló, rechazó la operación o rechazó las credenciales del servidor. El pago queda FAILED con el motivo
+          description: >
+            La pasarela falló, rechazó la operación o rechazó las credenciales del servidor al crear el
+            checkout: el pago queda FAILED con el motivo y, si el pedido traía una Idempotency-Key, para
+            reintentar hace falta una nueva. También cuando la pasarela falla al revisar un checkout vencido de
+            la cita: en ese caso no
+            se crea ningún pago y el checkout vencido sigue bloqueando
           content:
             application/json:
               schema:
@@ -1887,7 +1926,9 @@ paths:
             example: "123e4567-e89b-12d3-a456-426614174000"
       responses:
         '200':
-          description: Pagos de la cita obtenidos exitosamente
+          description: >
+            Pagos de la cita obtenidos exitosamente, con sus datos de pasarela (ver el schema Payment). Un
+            cliente puede usar `checkoutUrl` para volver a un checkout abierto
           content:
             application/json:
               schema:
@@ -1929,7 +1970,7 @@ paths:
             example: "123e4567-e89b-12d3-a456-426614174000"
       responses:
         '200':
-          description: Pago obtenido exitosamente
+          description: Pago obtenido exitosamente, con sus datos de pasarela (ver el schema Payment)
           content:
             application/json:
               schema:
@@ -2083,7 +2124,12 @@ paths:
     post:
       tags: [Payments]
       summary: Reembolsar pago (Solo Admin)
-      description: Reembolsa un pago completado. Solo se pueden reembolsar pagos con estado COMPLETED.
+      description: |
+        Reembolsa un pago completado. Solo se pueden reembolsar pagos con estado COMPLETED.
+
+        Un pago manual queda REFUNDED en el momento (200). Un pago de pasarela se reembolsa en el proveedor: si el proveedor lo confirma, el pago queda REFUNDED (200); si lo acepta sin confirmarlo todavía, el pago sigue COMPLETED con el identificador y el monto del reembolso anotados (202), y pasa a REFUNDED cuando llega la confirmación por webhook o por sincronización.
+
+        Si el proveedor falla o rechaza el reembolso, responde 502 y no se guarda nada: el pago sigue reembolsable.
       parameters:
         - name: id
           in: path
@@ -2106,7 +2152,7 @@ paths:
                   description: "Razón del reembolso (opcional)"
       responses:
         '200':
-          description: Pago reembolsado exitosamente
+          description: Reembolso aplicado; el pago quedó REFUNDED
           content:
             application/json:
               schema:
@@ -2120,6 +2166,23 @@ paths:
                     example: "Payment refunded successfully"
                   data:
                     $ref: '#/components/schemas/Payment'
+        '202':
+          description: >
+            El proveedor aceptó el reembolso sin confirmarlo todavía. El pago sigue COMPLETED, con
+            `gatewayRefundId` y `refundedAmount` anotados
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Refund accepted by the payment gateway and pending confirmation"
+                  data:
+                    $ref: '#/components/schemas/Payment'
         '400':
           $ref: '#/components/responses/Error400'
         '401':
@@ -2129,7 +2192,47 @@ paths:
         '404':
           $ref: '#/components/responses/Error404'
         '422':
-          $ref: '#/components/responses/Error422'
+          description: >
+            El pago no está COMPLETED, o es de pasarela y no tiene identificador en el proveedor (hay que
+            sincronizarlo primero)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                notCompleted:
+                  summary: El pago no está completado
+                  value:
+                    success: false
+                    message: "Only completed payments can be refunded"
+                    code: "BUSINESS_RULE_ERROR"
+                noGatewayPaymentId:
+                  summary: Pago de pasarela sin identificador en el proveedor
+                  value:
+                    success: false
+                    message: "This payment has no gateway payment identifier, so there is nothing to refund at the payment gateway. Sync it with the provider first"
+                    code: "BUSINESS_RULE_ERROR"
+        '502':
+          description: >
+            El proveedor falló, rechazó el pedido, rechazó las credenciales del servidor o rechazó el
+            reembolso. No se guarda nada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                retryable:
+                  summary: El proveedor no respondió
+                  value:
+                    success: false
+                    message: "The payment gateway did not process the refund. Please try again later."
+                    code: "BUSINESS_RULE_ERROR"
+                refused:
+                  summary: El proveedor rechazó el reembolso
+                  value:
+                    success: false
+                    message: "The payment gateway refused the refund. Check the payment at the provider before retrying."
+                    code: "BUSINESS_RULE_ERROR"
 
   /payments/{id}/cancel:
     post:
@@ -2171,6 +2274,193 @@ paths:
           $ref: '#/components/responses/Error404'
         '422':
           $ref: '#/components/responses/Error422'
+
+  /payments/{id}/sync:
+    post:
+      tags: [Payments]
+      summary: Sincronizar un pago con la pasarela (Solo Admin)
+      description: |
+        Relee el estado del pago en la pasarela y lo aplica. Es el mismo flujo que dispara una notificación del proveedor, pero a pedido: sirve para corregir un pago desfasado cuando su notificación no llegó o falló.
+
+        Si el pago todavía no tiene identificador en el proveedor (lo escribe la notificación), se busca en la pasarela por la referencia del checkout. No registra ningún evento de webhook. `lastSyncedAt` se actualiza siempre, aunque el estado no cambie.
+
+        No aplica la regla de cobro único: registra lo que pasó en la pasarela aunque la cita ya tenga otro pago completado.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+            example: "123e4567-e89b-12d3-a456-426614174000"
+      responses:
+        '200':
+          description: Pago sincronizado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Payment synced with the payment gateway and its status changed"
+                  data:
+                    type: object
+                    properties:
+                      payment:
+                        $ref: '#/components/schemas/Payment'
+                      changed:
+                        type: boolean
+                        example: true
+                        description: >
+                          true si la sincronización cambió el estado del pago. false si el estado ya
+                          coincidía o si el proveedor informó una transición imposible (por ejemplo, desde
+                          REFUNDED): en los dos casos el estado quedó igual
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '422':
+          description: >
+            El pago es manual, el proveedor no reconoce su identificador, o no tiene identificador y el
+            proveedor tampoco tiene ningún pago para su checkout
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                manualPayment:
+                  summary: El pago es manual
+                  value:
+                    success: false
+                    message: "Only gateway-backed payments can be synced: a manual payment has no state at any provider to read"
+                    code: "BUSINESS_RULE_ERROR"
+                notPaidYet:
+                  summary: Nadie pagó el checkout todavía
+                  value:
+                    success: false
+                    message: "This payment has no gateway payment identifier and the payment gateway has no payment for its checkout: nobody has paid it, so there is nothing to sync"
+                    code: "BUSINESS_RULE_ERROR"
+        '502':
+          description: El proveedor no respondió, rechazó el pedido o rechazó las credenciales del servidor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: "The payment gateway did not respond. Please try again later."
+                code: "BUSINESS_RULE_ERROR"
+
+  /payments/webhooks/mercadopago:
+    post:
+      tags: [Payments]
+      summary: Recibir una notificación de Mercado Pago (pública, autenticada por firma)
+      description: |
+        Endpoint que llama Mercado Pago, no un usuario. No usa token ni CSRF: cada notificación se autentica con la firma HMAC-SHA256 del header `x-signature`, calculada sobre `data.id`, `x-request-id` y `ts`. La URL se configura en el panel de la aplicación de Mercado Pago.
+
+        El estado del pago nunca se toma del cuerpo de la notificación: se vuelve a consultar al proveedor. Las notificaciones repetidas se descartan, y solo se procesan las de tipo `payment`.
+
+        Mercado Pago reintenta ante cualquier respuesta que no sea 200 o 201, así que solo se responde con error cuando el reintento puede servir. No aplica la regla de cobro único: registra lo que pasó en la pasarela aunque la cita ya tenga otro pago completado.
+      security: []
+      parameters:
+        - name: x-signature
+          in: header
+          required: true
+          schema:
+            type: string
+            example: "ts=1704908010,v1=618c85345248dd820d5fd456117c2ab2ef8eda45a0282ff693eac24131a5e839"
+          description: "Firma de la notificación: el timestamp (`ts`) y el HMAC (`v1`)"
+        - name: x-request-id
+          in: header
+          required: false
+          schema:
+            type: string
+            example: "bb56a2f1-6aae-46ac-982e-9dcd3581d08e"
+          description: "Identificador del envío; forma parte de lo que se firma"
+        - name: data.id
+          in: query
+          required: false
+          schema:
+            type: string
+            example: "123456789"
+          description: "Identificador del recurso notificado; forma parte de lo que se firma"
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            example: "payment"
+      requestBody:
+        required: true
+        description: Notificación de Mercado Pago. Se recibe sin parsear, con un máximo de 1 MB
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+            example:
+              id: 12345678901234
+              live_mode: true
+              type: "payment"
+              date_created: "2026-11-12T15:00:00Z"
+              user_id: "1234567"
+              api_version: "v1"
+              action: "payment.updated"
+              data:
+                id: "123456789"
+      responses:
+        '200':
+          description: Notificación procesada, repetida o descartada. No hace falta reintentar
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  received:
+                    type: boolean
+                    example: true
+        '401':
+          description: >
+            Firma ausente, malformada o inválida, `ts` fuera de la ventana de tolerancia, o cuerpo que no llegó
+            como JSON. La respuesta no indica el motivo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookError'
+              example:
+                received: false
+                code: "UNAUTHORIZED"
+                message: "Invalid webhook signature"
+        '413':
+          description: El cuerpo supera 1 MB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookError'
+              example:
+                received: false
+                code: "PAYLOAD_TOO_LARGE"
+                message: "Webhook payload exceeds the 1mb limit"
+        '500':
+          description: >
+            Fallo transitorio: el proveedor no respondió o la base no aceptó la escritura. Mercado Pago
+            reintenta la notificación
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookError'
+              example:
+                received: false
+                code: "WEBHOOK_PROCESSING_FAILED"
+                message: "Could not process the notification. Please retry."
 
   # HOLIDAYS
   /holidays:
@@ -3274,6 +3564,10 @@ components:
 
     Payment:
       type: object
+      description: >
+        Pago de una cita. Los campos de pasarela (desde `provider`) los devuelven las lecturas de un pago
+        (por ID y por cita), el reembolso y la sincronización; el resto de los endpoints de pagos los omite.
+        Un campo sin valor no aparece en la respuesta. La clave de idempotencia nunca se expone.
       properties:
         id:
           type: string
@@ -3314,6 +3608,67 @@ components:
           type: string
           format: date-time
           example: "2025-12-22T10:30:00.000Z"
+        refundReason:
+          type: string
+          example: "Cliente solicitó cancelación del servicio"
+          description: "Razón del reembolso, si el pago se reembolsó con una"
+        provider:
+          type: string
+          enum: [MANUAL, MERCADO_PAGO]
+          example: "MERCADO_PAGO"
+          description: "Proveedor del pago. Un pago manual informa MANUAL"
+        gatewayPaymentId:
+          type: string
+          example: "123456789"
+          description: "Identificador del pago en la pasarela. Lo escribe la notificación o la sincronización"
+        gatewayStatus:
+          type: string
+          example: "approved"
+          description: "Estado informado por la pasarela, sin traducir"
+        refundedAmount:
+          type: number
+          format: float
+          example: 150.00
+          description: "Monto reembolsado por la pasarela"
+        gatewayRefundId:
+          type: string
+          example: "987654321"
+          description: "Identificador del reembolso en la pasarela"
+        failureReason:
+          type: string
+          example: "cc_rejected_insufficient_amount"
+          description: "Motivo del fallo: el que informó la pasarela, o el error al crear el checkout"
+        lastSyncedAt:
+          type: string
+          format: date-time
+          example: "2025-12-22T10:31:00.000Z"
+          description: "Última vez que se leyó el estado del pago en la pasarela"
+        checkoutUrl:
+          type: string
+          format: uri
+          example: "https://www.mercadopago.com.ar/checkout/v1/redirect?pref_id=1234567-abcd"
+          description: "URL del checkout hospedado. Permite volver a llevar al pagador a un checkout abierto"
+        checkoutExpiresAt:
+          type: string
+          format: date-time
+          example: "2025-12-22T10:30:00.000Z"
+          description: >
+            Vencimiento del checkout: el que informó la pasarela o, si no informó uno, 30 minutos desde la
+            creación del pago. Solo aparece si el pago tiene un checkout creado
+
+    WebhookError:
+      type: object
+      description: Respuesta de error del webhook de la pasarela
+      properties:
+        received:
+          type: boolean
+          example: false
+        code:
+          type: string
+          example: "UNAUTHORIZED"
+        message:
+          type: string
+          example: "Invalid webhook signature"
 
     Checkout:
       type: object
