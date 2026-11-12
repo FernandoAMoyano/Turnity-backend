@@ -26,12 +26,6 @@ import { ConflictError } from '../../../../shared/exceptions/ConflictError';
 const UNIQUE_CONSTRAINT_VIOLATION = 'P2002';
 
 /**
- * Índice único parcial que admite un solo pago de pasarela PENDING por cita.
- * No figura en el schema de Prisma: se crea en su propia migración.
- */
-const OPEN_GATEWAY_CHECKOUT_INDEX = 'Payment_appointmentId_open_gateway_checkout_key';
-
-/**
  * Implementación del repositorio de pagos con Prisma
  */
 export class PrismaPaymentRepository implements IPaymentRepository, IPaymentGatewayLookup {
@@ -89,10 +83,12 @@ export class PrismaPaymentRepository implements IPaymentRepository, IPaymentGate
 
   /**
    * Indica si el error es una violación del índice de un checkout abierto por cita
-   * @description Prisma informa en `meta.target` el nombre del índice o la
-   * lista de columnas, según conozca o no el índice desde el schema. Las dos
-   * formas identifican este índice sin ambigüedad: es la única restricción
-   * única sobre `appointmentId`.
+   * @description El índice único parcial
+   * `Payment_appointmentId_open_gateway_checkout_key` admite un solo pago de
+   * pasarela PENDING por cita. No figura en el schema de Prisma: se crea en su
+   * propia migración, y por eso Prisma informa en `meta.target` la lista de
+   * columnas y no el nombre del índice. `['appointmentId']` lo identifica sin
+   * ambigüedad: es la única restricción única sobre esa columna.
    */
   private isOpenGatewayCheckoutViolation(error: unknown): boolean {
     if (
@@ -103,9 +99,6 @@ export class PrismaPaymentRepository implements IPaymentRepository, IPaymentGate
     }
 
     const target = error.meta?.target;
-    if (typeof target === 'string') {
-      return target === OPEN_GATEWAY_CHECKOUT_INDEX;
-    }
     return Array.isArray(target) && target.length === 1 && target[0] === 'appointmentId';
   }
 
