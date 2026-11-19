@@ -1,7 +1,7 @@
-import { Payment } from '../../domain/entities/Payment';
 import { IPaymentRepository } from '../../domain/repositories/IPaymentRepository';
 import { IAppointmentRepository } from '../../../appointments/domain/repositories/IAppointmentRepository';
 import { PaymentResponseDto } from '../dto/response/PaymentResponseDto';
+import { toPaymentResponseDto } from '../mappers/toPaymentResponseDto';
 import { NotFoundError } from '../../../../shared/exceptions/NotFoundError';
 import { ForbiddenError } from '../../../../shared/exceptions/ForbiddenError';
 
@@ -36,7 +36,7 @@ export class GetPaymentsByAppointment {
 
     const payments = await this.paymentRepository.findByAppointmentId(appointmentId);
 
-    return payments.map((payment) => this.toResponseDto(payment));
+    return payments.map((payment) => toPaymentResponseDto(payment));
   }
 
   /**
@@ -76,19 +76,5 @@ export class GetPaymentsByAppointment {
     }
 
     throw new ForbiddenError('You can only access payments for your own appointments');
-  }
-
-  private toResponseDto(payment: Payment): PaymentResponseDto {
-    return {
-      id: payment.id,
-      amount: payment.amount,
-      status: payment.status,
-      method: payment.method,
-      paymentDate: payment.paymentDate,
-      appointmentId: payment.appointmentId,
-      refundReason: payment.refundReason,
-      createdAt: payment.createdAt,
-      updatedAt: payment.updatedAt,
-    };
   }
 }

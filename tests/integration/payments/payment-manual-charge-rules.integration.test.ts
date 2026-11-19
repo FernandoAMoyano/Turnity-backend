@@ -10,6 +10,7 @@ import {
   PaymentProviderEnum,
 } from '../../../src/modules/payments/domain/entities/Payment';
 import { ConflictError } from '../../../src/shared/exceptions/ConflictError';
+import { DuplicateIdempotencyKeyError } from '../../../src/modules/payments/domain/errors/DuplicateIdempotencyKeyError';
 
 /**
  * Cobro único de una cita en el camino manual, por HTTP y contra la base
@@ -230,8 +231,8 @@ describe('Payments Integration Tests - Cobro único en el camino manual', () => 
       expect(next.isPending).toBe(true);
     });
 
-    // No debería traducir a conflicto de checkout la violación de otra restricción única
-    it('should not translate a violation of another unique constraint into a checkout conflict', async () => {
+    // Debería traducir la violación de idempotencyKey a su propio error, no al conflicto de checkout abierto
+    it('should translate an idempotencyKey violation into its own error, not into an open checkout conflict', async () => {
       const first = await createAppointment();
       const second = await createAppointment();
       const sharedKey = generateUuid();
@@ -239,8 +240,10 @@ describe('Payments Integration Tests - Cobro único en el camino manual', () => 
 
       const result = repository.save(gatewayPayment(second.id, sharedKey));
 
-      await expect(result).rejects.toMatchObject({ code: 'P2002' });
-      await expect(result).rejects.not.toBeInstanceOf(ConflictError);
+      await expect(result).rejects.toBeInstanceOf(DuplicateIdempotencyKeyError);
+      await expect(result).rejects.not.toThrow(
+        'There is already a pending checkout for this appointment',
+      );
     });
   });
 });

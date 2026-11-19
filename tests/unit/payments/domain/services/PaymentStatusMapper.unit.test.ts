@@ -2,7 +2,7 @@ import { PaymentStatusEnum } from '../../../../../src/modules/payments/domain/en
 import { PaymentStatusMapper } from '../../../../../src/modules/payments/domain/services/PaymentStatusMapper';
 
 describe('PaymentStatusMapper', () => {
-  describe('toInternalStatus - tabla de mapeo (§2.5 del plan)', () => {
+  describe('toInternalStatus - tabla de mapeo', () => {
     const cases: Array<[string, PaymentStatusEnum]> = [
       ['approved', PaymentStatusEnum.COMPLETED],
       ['authorized', PaymentStatusEnum.PENDING],

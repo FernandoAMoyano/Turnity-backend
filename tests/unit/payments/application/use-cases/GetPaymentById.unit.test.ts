@@ -1,7 +1,12 @@
 import { GetPaymentById } from '../../../../../src/modules/payments/application/use-cases/GetPaymentById';
 import { IPaymentRepository } from '../../../../../src/modules/payments/domain/repositories/IPaymentRepository';
 import { IAppointmentRepository } from '../../../../../src/modules/appointments/domain/repositories/IAppointmentRepository';
-import { Payment, PaymentStatusEnum, PaymentMethodEnum } from '../../../../../src/modules/payments/domain/entities/Payment';
+import {
+  Payment,
+  PaymentStatusEnum,
+  PaymentMethodEnum,
+  PaymentProviderEnum,
+} from '../../../../../src/modules/payments/domain/entities/Payment';
 import { NotFoundError } from '../../../../../src/shared/exceptions/NotFoundError';
 import { ForbiddenError } from '../../../../../src/shared/exceptions/ForbiddenError';
 
@@ -95,6 +100,7 @@ describe('GetPaymentById Use Case', () => {
       appointmentId: mockPayment.appointmentId,
       createdAt: mockPayment.createdAt,
       updatedAt: mockPayment.updatedAt,
+      provider: PaymentProviderEnum.MANUAL,
     });
   });
 
@@ -120,7 +126,7 @@ describe('GetPaymentById Use Case', () => {
     expect(result.paymentDate).toBeNull();
   });
 
-  describe('Ownership (F18)', () => {
+  describe('Ownership', () => {
     // Debería permitir a ADMIN ver cualquier pago sin necesidad de resolver la cita
     it('should allow ADMIN to view any payment without resolving the appointment', async () => {
       mockPaymentRepository.findById.mockResolvedValue(mockPayment);
@@ -154,7 +160,7 @@ describe('GetPaymentById Use Case', () => {
 
     // CLIENT nunca llega a este use case en producción (GET /payments/:id solo
     // autoriza ADMIN/STYLIST en la ruta); el use case igual debe bloquearlo si
-    // se invoca directamente, sin resolver la cita (hallazgo #2, Opción A)
+    // se invoca directamente, sin resolver la cita
     it('should throw ForbiddenError for CLIENT without resolving the appointment', async () => {
       mockPaymentRepository.findById.mockResolvedValue(mockPayment);
 

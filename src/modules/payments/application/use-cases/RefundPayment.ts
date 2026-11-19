@@ -4,6 +4,7 @@ import { IPaymentGateway, GatewayRefund } from '../../domain/gateways/IPaymentGa
 import { IAppointmentRepository } from '../../../appointments/domain/repositories/IAppointmentRepository';
 import { RefundPaymentDto } from '../dto/request/RefundPaymentDto';
 import { PaymentResponseDto } from '../dto/response/PaymentResponseDto';
+import { toPaymentResponseDto } from '../mappers/toPaymentResponseDto';
 import { NotFoundError } from '../../../../shared/exceptions/NotFoundError';
 import { BusinessRuleError } from '../../../../shared/exceptions/BusinessRuleError';
 import { ForbiddenError } from '../../../../shared/exceptions/ForbiddenError';
@@ -83,7 +84,7 @@ export class RefundPayment {
     // Guardar cambios
     const updatedPayment = await this.paymentRepository.update(payment);
 
-    return this.toResponseDto(updatedPayment);
+    return toPaymentResponseDto(updatedPayment);
   }
 
   /**
@@ -146,7 +147,7 @@ export class RefundPayment {
 
     const updatedPayment = await this.paymentRepository.update(payment);
 
-    return this.toResponseDto(updatedPayment);
+    return toPaymentResponseDto(updatedPayment);
   }
 
   /**
@@ -214,25 +215,5 @@ export class RefundPayment {
 
     // CLIENT y cualquier otro rol: sin acceso a esta operación
     throw new ForbiddenError('You can only access payments for your own appointments');
-  }
-
-  private toResponseDto(payment: Payment): PaymentResponseDto {
-    return {
-      id: payment.id,
-      amount: payment.amount,
-      status: payment.status,
-      method: payment.method,
-      paymentDate: payment.paymentDate,
-      appointmentId: payment.appointmentId,
-      refundReason: payment.refundReason,
-      createdAt: payment.createdAt,
-      updatedAt: payment.updatedAt,
-      provider: payment.provider,
-      gatewayPaymentId: payment.gatewayPaymentId,
-      gatewayStatus: payment.gatewayStatus,
-      refundedAmount: payment.refundedAmount,
-      gatewayRefundId: payment.gatewayRefundId,
-      lastSyncedAt: payment.lastSyncedAt,
-    };
   }
 }

@@ -17,6 +17,7 @@ import { AppointmentChargeGuard, ChargeConflictMessages } from '../services/Appo
 import { NotFoundError } from '../../../../shared/exceptions/NotFoundError';
 import { BusinessRuleError } from '../../../../shared/exceptions/BusinessRuleError';
 import { ForbiddenError } from '../../../../shared/exceptions/ForbiddenError';
+import { ConflictError } from '../../../../shared/exceptions/ConflictError';
 import { logger } from '../../../../shared/logger/logger';
 
 /**
@@ -28,6 +29,16 @@ const CHECKOUT_CONFLICT_MESSAGES: ChargeConflictMessages = {
   openCheckout:
     'There is already a pending checkout for this appointment. Wait for it to expire or resolve, or ask an admin to sync it.',
 };
+
+/**
+ * Mensajes con los que se rechaza un pedido por su `Idempotency-Key`
+ */
+const KEY_USED_FOR_ANOTHER_APPOINTMENT_MESSAGE =
+  'This Idempotency-Key was already used for another appointment. Use a new key.';
+const KEY_OF_UNRESUMABLE_CHECKOUT_MESSAGE =
+  'This Idempotency-Key belongs to a checkout that could not be created. Use a new key to try again.';
+const CHECKOUT_BEING_CREATED_MESSAGE =
+  'A checkout with this Idempotency-Key is still being created. Retry the request in a few seconds.';
 
 /**
  * Caso de uso para abrir un checkout contra la pasarela de pago
@@ -42,6 +53,11 @@ const CHECKOUT_CONFLICT_MESSAGES: ChargeConflictMessages = {
  * pago completado, manual o de pasarela, ni si tiene otro checkout de pasarela
  * abierto. Un checkout vencido deja de bloquear recién después de confirmar
  * con la pasarela que nadie lo pagó.
+ *
+ * Un pedido con una `Idempotency-Key` ya usada devuelve el checkout de esa
+ * clave, retoma uno que se cortó antes de anotar su URL, o se rechaza si la
+ * clave es de otra cita o de un checkout que no se pudo crear. Dos pedidos
+ * simultáneos con la misma clave terminan en un solo pago.
  *
  * Permisos: ADMIN sin restricción, STYLIST solo si es el estilista asignado y
  * CLIENT solo si es el dueño de la cita. Es la única operación de escritura
@@ -69,8 +85,11 @@ export class CreateCheckout {
    * @throws NotFoundError si la cita o alguno de sus servicios no existe
    * @throws ForbiddenError si el usuario no tiene permisos sobre la cita
    * @throws BusinessRuleError si la cita no está en un estado válido para
-   * pagar o no tiene servicios que cobrar
-   * @throws ConflictError si la cita ya está pagada o ya tiene un checkout abierto
+   * pagar o no tiene servicios que cobrar, o si la `idempotencyKey` ya se usó
+   * para otra cita o pertenece a un checkout que no se pudo crear
+   * @throws ConflictError si la cita ya está pagada o ya tiene un checkout
+   * abierto, o si otro pedido con la misma `idempotencyKey` todavía está
+   * creando el checkout
    * @throws AppError con status 502 si la pasarela falla
    */
   async execute(
@@ -93,35 +112,63 @@ export class CreateCheckout {
       );
     }
 
+    const description = dto.description ?? `Payment for appointment ${appointment.id}`;
+
+    if (!dto.idempotencyKey) {
+      const payment = await this.createAndSaveGatewayPayment(appointment, generateUuid());
+      return { dto: await this.openCheckout(payment, description), created: true };
+    }
+
     // Idempotencia saliente: un reintento del cliente con la misma clave
     // devuelve el checkout ya creado en vez de abrir una segunda preferencia
     // en la pasarela. Complementa los chequeos de cobro único, que evitan un
     // segundo checkout por dos acciones distintas del usuario.
-    let payment: Payment;
-    const description = dto.description ?? `Payment for appointment ${appointment.id}`;
-
-    if (dto.idempotencyKey) {
-      const existing = await this.paymentRepository.findByIdempotencyKey(dto.idempotencyKey);
-      if (existing) {
-        if (existing.checkoutUrl && existing.gatewayPreferenceId) {
-          return { dto: this.toResponseDto(existing), created: false };
-        }
-        // Recuperación: un intento anterior con esta misma Idempotency-Key
-        // se cortó entre `save()` y `update()` (crash, reinicio del proceso)
-        // y dejó el Payment PENDING sin checkoutUrl/gatewayPreferenceId. Se
-        // reintenta sobre el mismo registro en vez de crear uno nuevo:
-        // `idempotencyKey` es @unique en la base, así que un segundo
-        // `Payment.createForGateway` con la misma clave violaría la
-        // constraint. No pasa por los chequeos de cobro único ni recalcula el
-        // monto: es el mismo checkout, no uno segundo.
-        payment = existing;
-      } else {
-        payment = await this.createAndSaveGatewayPayment(appointment, dto.idempotencyKey);
+    const existing = await this.paymentRepository.findByIdempotencyKey(dto.idempotencyKey);
+    if (existing) {
+      this.ensureKeyBelongsToAppointment(existing, dto.appointmentId);
+      if (this.hasRecordedCheckout(existing)) {
+        return { dto: this.toResponseDto(existing), created: false };
       }
-    } else {
-      payment = await this.createAndSaveGatewayPayment(appointment, generateUuid());
+      this.ensureCheckoutCanBeResumed(existing);
+      // Recuperación: un intento anterior con esta misma Idempotency-Key
+      // se cortó entre `save()` y `update()` (crash, reinicio del proceso)
+      // y dejó el Payment PENDING sin checkoutUrl/gatewayPreferenceId. Se
+      // reintenta sobre el mismo registro en vez de crear uno nuevo:
+      // `idempotencyKey` es @unique en la base, así que un segundo
+      // `Payment.createForGateway` con la misma clave violaría la
+      // constraint. No pasa por los chequeos de cobro único ni recalcula el
+      // monto: es el mismo checkout, no uno segundo. Este camino no distingue
+      // un intento cortado de uno que todavía está en curso: en ese caso se
+      // crea una segunda preferencia para el mismo pago, y cualquiera de las
+      // dos que se pague se registra sobre él.
+      return { dto: await this.openCheckout(existing, description), created: true };
     }
 
+    let payment: Payment;
+    try {
+      payment = await this.createAndSaveGatewayPayment(appointment, dto.idempotencyKey);
+    } catch (error) {
+      const concurrent = await this.resolveConcurrentRequest(
+        error,
+        dto.idempotencyKey,
+        dto.appointmentId,
+      );
+      return { dto: concurrent, created: false };
+    }
+
+    return { dto: await this.openCheckout(payment, description), created: true };
+  }
+
+  /**
+   * Crea la preferencia en la pasarela para un pago PENDING ya guardado y la
+   * anota en el pago
+   * @param payment - Pago PENDING respaldado por la pasarela
+   * @param description - Descripción del cobro que ve el pagador
+   * @returns El checkout creado
+   * @throws AppError con status 502 si la pasarela falla; el pago queda FAILED
+   * con el motivo
+   */
+  private async openCheckout(payment: Payment, description: string): Promise<CheckoutResponseDto> {
     try {
       const checkout = await this.paymentGateway.createCheckout({
         paymentId: payment.id,
@@ -135,14 +182,14 @@ export class CreateCheckout {
         checkout.gatewayPreferenceId,
         checkout.expiresAt,
       );
-      payment = await this.paymentRepository.update(payment);
+      const updated = await this.paymentRepository.update(payment);
 
-      return { dto: this.toResponseDto(payment), created: true };
+      return this.toResponseDto(updated);
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'Unknown gateway error';
       logger.warn('[CreateCheckout] La pasarela rechazó la creación del checkout', {
         paymentId: payment.id,
-        appointmentId: dto.appointmentId,
+        appointmentId: payment.appointmentId,
         reason,
       });
 
@@ -154,6 +201,81 @@ export class CreateCheckout {
         rejected: 'The payment gateway rejected the checkout creation.',
       });
     }
+  }
+
+  /**
+   * Resuelve el alta fallida de un checkout cuando otro pedido con la misma
+   * clave de idempotencia guardó su pago primero
+   * @description Dos pedidos simultáneos con la misma clave no encuentran el
+   * pago del otro en la búsqueda inicial. Según el momento, el que guarda
+   * segundo choca con el cobro único (el checkout del primero ya cuenta como
+   * abierto), con el índice de checkout abierto o con la restricción única de
+   * la clave. Si existe un pago con esa clave, este pedido es un reintento del
+   * mismo checkout y no un conflicto con otro.
+   * @param error - Error con el que falló el alta
+   * @param idempotencyKey - Clave de idempotencia del pedido
+   * @param appointmentId - Cita del pedido
+   * @returns El checkout del pedido que guardó primero, si ya tiene su URL
+   * @throws El error original si no es un conflicto o si ningún pago tiene la clave
+   * @throws BusinessRuleError si la clave es de otra cita o de un checkout que
+   * no se pudo crear
+   * @throws ConflictError si el pedido que guardó primero todavía está creando
+   * el checkout
+   */
+  private async resolveConcurrentRequest(
+    error: unknown,
+    idempotencyKey: string,
+    appointmentId: string,
+  ): Promise<CheckoutResponseDto> {
+    if (!(error instanceof ConflictError)) {
+      throw error;
+    }
+
+    const winner = await this.paymentRepository.findByIdempotencyKey(idempotencyKey);
+    if (!winner) {
+      throw error;
+    }
+
+    this.ensureKeyBelongsToAppointment(winner, appointmentId);
+    if (this.hasRecordedCheckout(winner)) {
+      return this.toResponseDto(winner);
+    }
+    this.ensureCheckoutCanBeResumed(winner);
+    throw new ConflictError(CHECKOUT_BEING_CREATED_MESSAGE);
+  }
+
+  /**
+   * Verifica que la clave de idempotencia se haya usado para la misma cita
+   * @description Reusar una clave con otra cita es un error de quien llama, y
+   * devolver el checkout de esa otra cita expondría un pago sobre el que no se
+   * validaron permisos.
+   * @throws BusinessRuleError si el pago de la clave es de otra cita
+   */
+  private ensureKeyBelongsToAppointment(payment: Payment, appointmentId: string): void {
+    if (payment.appointmentId !== appointmentId) {
+      throw new BusinessRuleError(KEY_USED_FOR_ANOTHER_APPOINTMENT_MESSAGE);
+    }
+  }
+
+  /**
+   * Verifica que un checkout sin URL todavía pueda retomarse
+   * @description Solo un pago PENDING puede retomarse. Un checkout que falló al
+   * crearse queda FAILED, y reintentarlo sobre ese pago anotaría una URL de pago
+   * vigente en un pago fallido. Para volver a intentar hace falta una clave
+   * nueva, que pasa otra vez por el cobro único y recalcula el monto.
+   * @throws BusinessRuleError si el pago ya no está PENDING
+   */
+  private ensureCheckoutCanBeResumed(payment: Payment): void {
+    if (!payment.isPending) {
+      throw new BusinessRuleError(KEY_OF_UNRESUMABLE_CHECKOUT_MESSAGE);
+    }
+  }
+
+  /**
+   * Indica si el pago ya tiene anotada la preferencia creada en la pasarela
+   */
+  private hasRecordedCheckout(payment: Payment): boolean {
+    return Boolean(payment.checkoutUrl && payment.gatewayPreferenceId);
   }
 
   /**
@@ -255,9 +377,9 @@ export class CreateCheckout {
     return {
       paymentId: payment.id,
       amount: payment.amount,
-      // No-null assertion: en los dos caminos que llegan acá (checkout recién
-      // creado, o reencontrado por idempotencyKey) ya se llamó a
-      // recordCheckoutCreated, así que ambos campos están seteados.
+      // No-null assertion: solo se llega acá con un checkout recién anotado
+      // o con un pago que `hasRecordedCheckout` confirmó, así que ambos campos
+      // están seteados.
       checkoutUrl: payment.checkoutUrl!,
       gatewayPreferenceId: payment.gatewayPreferenceId!,
       expiresAt: payment.effectiveCheckoutExpiresAt,

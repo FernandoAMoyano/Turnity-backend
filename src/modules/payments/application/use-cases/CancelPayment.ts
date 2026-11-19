@@ -10,8 +10,7 @@ import { ForbiddenError } from '../../../../shared/exceptions/ForbiddenError';
  * Caso de uso para cancelar (marcar como fallido) un pago
  * @description Marca un pago pendiente como fallido. Aplica control de acceso
  * por ownership: ADMIN sin restricción, STYLIST solo si es el estilista
- * asignado a la cita del pago; CLIENT no tiene acceso a esta operación (fuera
- * del alcance aprobado, ver F18)
+ * asignado a la cita del pago; CLIENT no tiene acceso a esta operación
  */
 export class CancelPayment {
   constructor(

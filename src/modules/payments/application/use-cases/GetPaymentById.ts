@@ -1,7 +1,7 @@
-import { Payment } from '../../domain/entities/Payment';
 import { IPaymentRepository } from '../../domain/repositories/IPaymentRepository';
 import { IAppointmentRepository } from '../../../appointments/domain/repositories/IAppointmentRepository';
 import { PaymentResponseDto } from '../dto/response/PaymentResponseDto';
+import { toPaymentResponseDto } from '../mappers/toPaymentResponseDto';
 import { NotFoundError } from '../../../../shared/exceptions/NotFoundError';
 import { ForbiddenError } from '../../../../shared/exceptions/ForbiddenError';
 
@@ -11,7 +11,7 @@ import { ForbiddenError } from '../../../../shared/exceptions/ForbiddenError';
  * por ownership sobre la cita asociada: ADMIN sin restricción, STYLIST solo
  * pagos de citas donde es el estilista asignado. CLIENT nunca llega a este use
  * case: `GET /payments/:id` solo permite ADMIN/STYLIST a nivel de ruta; el
- * CLIENT accede a sus pagos únicamente vía `GET /payments/appointment/:id` (F18)
+ * CLIENT accede a sus pagos únicamente vía `GET /payments/appointment/:id`
  */
 export class GetPaymentById {
   constructor(
@@ -42,7 +42,7 @@ export class GetPaymentById {
 
     await this.validateAccessPermissions(payment.appointmentId, requesterId, requesterRole);
 
-    return this.toResponseDto(payment);
+    return toPaymentResponseDto(payment);
   }
 
   /**
@@ -76,21 +76,7 @@ export class GetPaymentById {
     // CLIENT (y cualquier otro rol): bloqueado sin resolver la cita. En la
     // práctica CLIENT nunca llega aquí porque `GET /payments/:id` solo autoriza
     // ADMIN/STYLIST en la ruta; el CLIENT accede a sus pagos vía
-    // `GET /payments/appointment/:id` (F18), donde sí se valida su ownership.
+    // `GET /payments/appointment/:id`, donde sí se valida su ownership.
     throw new ForbiddenError('You can only access payments for your own appointments');
-  }
-
-  private toResponseDto(payment: Payment): PaymentResponseDto {
-    return {
-      id: payment.id,
-      amount: payment.amount,
-      status: payment.status,
-      method: payment.method,
-      paymentDate: payment.paymentDate,
-      appointmentId: payment.appointmentId,
-      refundReason: payment.refundReason,
-      createdAt: payment.createdAt,
-      updatedAt: payment.updatedAt,
-    };
   }
 }

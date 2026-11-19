@@ -19,17 +19,12 @@ import {
 } from '../../domain/repositories/IPaymentRepository';
 import { IPaymentGatewayLookup } from '../../domain/repositories/IPaymentGatewayLookup';
 import { ConflictError } from '../../../../shared/exceptions/ConflictError';
+import { DuplicateIdempotencyKeyError } from '../../domain/errors/DuplicateIdempotencyKeyError';
 
 /**
  * Código de error de Prisma para violación de restricción única
  */
 const UNIQUE_CONSTRAINT_VIOLATION = 'P2002';
-
-/**
- * Índice único parcial que admite un solo pago de pasarela PENDING por cita.
- * No figura en el schema de Prisma: se crea en su propia migración.
- */
-const OPEN_GATEWAY_CHECKOUT_INDEX = 'Payment_appointmentId_open_gateway_checkout_key';
 
 /**
  * Implementación del repositorio de pagos con Prisma
@@ -42,8 +37,11 @@ export class PrismaPaymentRepository implements IPaymentRepository, IPaymentGate
    * @description Si dos pedidos abren un checkout sobre la misma cita al mismo
    * tiempo, los dos pasan la verificación de cobro único antes de que alguno
    * guarde su pago. El índice único parcial de la base resuelve esa carrera:
-   * el segundo `create` falla y se traduce a un conflicto.
+   * el segundo `create` falla y se traduce a un conflicto. Lo mismo pasa con
+   * dos pedidos que llegan al mismo tiempo con la misma clave de idempotencia:
+   * la restricción única de `idempotencyKey` rechaza el segundo.
    * @throws ConflictError si la cita ya tiene un checkout de pasarela abierto
+   * @throws DuplicateIdempotencyKeyError si otro pago ya tiene la misma clave de idempotencia
    */
   async save(payment: Payment): Promise<Payment> {
     try {
@@ -53,6 +51,9 @@ export class PrismaPaymentRepository implements IPaymentRepository, IPaymentGate
         throw new ConflictError(
           'There is already a pending checkout for this appointment. Wait for it to expire or resolve, or ask an admin to sync it.',
         );
+      }
+      if (this.isDuplicateIdempotencyKeyViolation(error)) {
+        throw new DuplicateIdempotencyKeyError();
       }
       throw error;
     }
@@ -89,12 +90,34 @@ export class PrismaPaymentRepository implements IPaymentRepository, IPaymentGate
 
   /**
    * Indica si el error es una violación del índice de un checkout abierto por cita
-   * @description Prisma informa en `meta.target` el nombre del índice o la
-   * lista de columnas, según conozca o no el índice desde el schema. Las dos
-   * formas identifican este índice sin ambigüedad: es la única restricción
-   * única sobre `appointmentId`.
+   * @description El índice único parcial
+   * `Payment_appointmentId_open_gateway_checkout_key` admite un solo pago de
+   * pasarela PENDING por cita. No figura en el schema de Prisma: se crea en su
+   * propia migración, y por eso Prisma informa en `meta.target` la lista de
+   * columnas y no el nombre del índice. `['appointmentId']` lo identifica sin
+   * ambigüedad: es la única restricción única sobre esa columna.
    */
   private isOpenGatewayCheckoutViolation(error: unknown): boolean {
+    return this.isUniqueViolationOn(error, 'appointmentId');
+  }
+
+  /**
+   * Indica si el error es una violación de la restricción única de `idempotencyKey`
+   * @description Si un mismo pago viola a la vez esta restricción y el índice de
+   * checkout abierto, PostgreSQL informa esta.
+   */
+  private isDuplicateIdempotencyKeyViolation(error: unknown): boolean {
+    return this.isUniqueViolationOn(error, 'idempotencyKey');
+  }
+
+  /**
+   * Indica si el error es una violación de una restricción única sobre una sola columna
+   * @description Prisma informa en `meta.target` la lista de columnas de la
+   * restricción violada.
+   * @param error - Error lanzado por Prisma
+   * @param column - Única columna que debe tener la restricción
+   */
+  private isUniqueViolationOn(error: unknown, column: string): boolean {
     if (
       !(error instanceof Prisma.PrismaClientKnownRequestError) ||
       error.code !== UNIQUE_CONSTRAINT_VIOLATION
@@ -103,10 +126,7 @@ export class PrismaPaymentRepository implements IPaymentRepository, IPaymentGate
     }
 
     const target = error.meta?.target;
-    if (typeof target === 'string') {
-      return target === OPEN_GATEWAY_CHECKOUT_INDEX;
-    }
-    return Array.isArray(target) && target.length === 1 && target[0] === 'appointmentId';
+    return Array.isArray(target) && target.length === 1 && target[0] === column;
   }
 
   /**
